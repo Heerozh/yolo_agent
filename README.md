@@ -88,12 +88,12 @@ docker run -d --privileged `
   -e DOCKER_TLS_CERTDIR= `
   -e DOCKER_DRIVER=overlay2 `
   -v agent-dind-run-...:/var/run `
-  --mount type=bind,source="$PWD",target=/workspace `
+  --mount type=bind,source="$PWD",target=/workspace-some-project `
   docker:dind --host=unix:///var/run/docker.sock
 
 docker run --rm -it `
-  --workdir /workspace `
-  --mount type=bind,source="$PWD",target=/workspace `
+  --workdir /workspace-some-project `
+  --mount type=bind,source="$PWD",target=/workspace-some-project `
   -v agent-dind-run-...:/var/run `
   --network container:agent-dind-... `
   --env AGENT_DOCKER_MODE=dind `
@@ -101,8 +101,10 @@ docker run --rm -it `
   yolo-agent:latest
 ```
 
-Inside the container, `/workspace` is the directory where the user ran
-`agent`.
+Inside the container, the default work directory is based on the folder name
+where the user ran `agent`. For example, running from `C:\path\to\some-project`
+mounts that folder at `/workspace-some-project`. Override it with
+`--workspace` when a fixed path is needed.
 
 The agent container runs commands as the non-root `agent` user. A root
 entrypoint performs startup setup, fixes Docker socket group access, then drops
@@ -151,7 +153,7 @@ started when needed, and the agent container talks to that daemon through a
 shared Unix socket.
 
 Use this when project tests run nested Docker containers and expect bind mounts
-from paths like `/workspace` to work.
+from paths like `/workspace-some-project` to work.
 
 The sidecar is reused by default, so the roughly 15 second DinD startup cost is
 paid only the first time for a workspace. Nested Docker images and containers
@@ -225,7 +227,8 @@ agent --docker-mode socket
 
 This mounts `/var/run/docker.sock` from Docker Desktop into the container. It is
 lighter, but it gives the container control over the host Docker daemon and can
-break nested bind mounts when tools inside the container refer to `/workspace`.
+break nested bind mounts when tools inside the container refer to the generated
+workspace path such as `/workspace-some-project`.
 
 Use this only when that tradeoff is acceptable.
 

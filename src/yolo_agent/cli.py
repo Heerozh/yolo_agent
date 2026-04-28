@@ -18,7 +18,7 @@ from typing import Any, Sequence
 
 DEFAULT_IMAGE = "yolo-agent:latest"
 DEFAULT_DOCKERFILE = "Dockerfile"
-DEFAULT_WORKSPACE = "/workspace"
+DEFAULT_WORKSPACE_TEMPLATE = "/workspace-{project}"
 DEFAULT_DIND_IMAGE = "docker:dind"
 DEFAULT_DIND_IDLE_TIMEOUT = "1h"
 DEFAULT_CONTAINER_HOME = "/home/agent"
@@ -83,8 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--workspace",
-        default=os.environ.get("AGENT_WORKSPACE", DEFAULT_WORKSPACE),
-        help=f"Container workspace path. Default: {DEFAULT_WORKSPACE}",
+        default=os.environ.get("AGENT_WORKSPACE"),
+        help=f"Container workspace path. Default: {DEFAULT_WORKSPACE_TEMPLATE}",
     )
     parser.add_argument(
         "--docker-mode",
@@ -324,6 +324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     command = normalize_remainder(args.command)
     host_cwd = Path.cwd().resolve()
+    workspace = args.workspace or default_workspace_path(host_cwd)
     should_build = resolve_build_enabled(args.build)
     build_tag = args.tag or args.image
     build_args = make_build_args(
@@ -339,7 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = RunConfig(
         docker_bin=args.docker_bin,
         image=image,
-        workspace=args.workspace,
+        workspace=workspace,
         host_cwd=host_cwd,
         docker_mode=args.docker_mode,
         command=command,
@@ -436,6 +437,15 @@ def parse_bool(value: str | None, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in FALSE_VALUES
+
+
+def default_workspace_path(host_cwd: Path) -> str:
+    return f"/workspace-{project_slug(host_cwd.name)}"
+
+
+def project_slug(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-.")
+    return slug or "workspace"
 
 
 def default_runtime_build_paths() -> RuntimeBuildPaths:
@@ -670,7 +680,7 @@ def run_with_sidecar_dind(config: RunConfig, *, dry_run: bool) -> int:
 
 
 def with_sidecar_names(config: RunConfig) -> RunConfig:
-    token = workspace_token(config.host_cwd, config.ports)
+    token = workspace_token(config.host_cwd, config.workspace, config.ports)
     suffix = token if config.dind_reuse else f"{token}-{os.getpid()}"
     dind_name = config.dind_name or f"agent-dind-{suffix}"
     run_volume = config.dind_run_volume or f"agent-dind-run-{suffix}"
@@ -707,12 +717,12 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
     )
 
 
-def workspace_token(host_cwd: Path, ports: Sequence[str] = ()) -> str:
-    token_source = str(host_cwd).lower()
+def workspace_token(host_cwd: Path, container_workspace: str, ports: Sequence[str] = ()) -> str:
+    token_source = str(host_cwd).lower() + "\nworkspace=" + container_workspace
     if ports:
         token_source += "\nports=" + "\n".join(sorted(ports))
     digest = hashlib.sha256(token_source.encode("utf-8")).hexdigest()[:8]
-    slug = re.sub(r"[^a-z0-9_.-]+", "-", host_cwd.name.lower()).strip("-.")
+    slug = project_slug(host_cwd.name).lower()
     return f"{slug or 'workspace'}-{digest}"[:48]
 
 

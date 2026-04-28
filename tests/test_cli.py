@@ -9,6 +9,7 @@ from unittest.mock import patch
 from yolo_agent.cli import (
     RunConfig,
     daily_cache_bust_value,
+    default_workspace_path,
     default_runtime_build_paths,
     existing_config_mounts,
     load_sidecar_records,
@@ -18,6 +19,7 @@ from yolo_agent.cli import (
     make_sidecar_dind_command,
     normalize_remainder,
     parse_duration_seconds,
+    project_slug,
     record_sidecar_use,
     resolve_build_enabled,
     resolve_dind_reuse,
@@ -123,6 +125,30 @@ class CliCommandTests(unittest.TestCase):
         self.assertEqual(first.dind_run_volume, second.dind_run_volume)
         self.assertTrue(first.dind_name.startswith("agent-dind-project-"))
         self.assertTrue(first.dind_run_volume.startswith("agent-dind-run-project-"))
+
+    def test_default_workspace_path_uses_current_directory_name(self) -> None:
+        self.assertEqual(default_workspace_path(Path("C:/xsoft/hetu")), "/workspace-hetu")
+
+    def test_project_slug_is_safe_for_container_path(self) -> None:
+        self.assertEqual(project_slug("My Project!"), "My-Project")
+
+    def test_sidecar_name_changes_when_container_workspace_changes(self) -> None:
+        base = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace-project",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+        )
+        other = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace-other",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+        )
+
+        self.assertNotEqual(with_sidecar_names(base).dind_name, with_sidecar_names(other).dind_name)
 
     def test_inline_dind_mode_adds_privileged_to_agent_container(self) -> None:
         config = RunConfig(
