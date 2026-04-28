@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
 
 DEFAULT_IMAGE = "yolo-agent:latest"
-DEFAULT_DOCKERFILE = "docker/Dockerfile"
+DEFAULT_DOCKERFILE = "Dockerfile"
 DEFAULT_WORKSPACE = "/workspace"
+DEFAULT_DIND_IMAGE = "docker:dind"
 
 
 @dataclass(frozen=True)
@@ -29,7 +33,13 @@ class RunConfig:
     ports: list[str] = field(default_factory=list)
     run_args: list[str] = field(default_factory=list)
     name: str | None = None
+    entrypoint: str | None = None
+    clear_entrypoint: bool = False
+    dind_image: str = DEFAULT_DIND_IMAGE
+    dind_name: str | None = None
+    dind_run_volume: str | None = None
     dind_volume: str | None = None
+    keep_dind: bool = False
     keep_container: bool = False
     no_tty: bool = False
     no_stdin: bool = False
@@ -53,9 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--docker-mode",
-        choices=("dind", "socket", "none"),
+        choices=("dind", "inline-dind", "socket", "none"),
         default=os.environ.get("AGENT_DOCKER_MODE", "dind"),
-        help="How Docker should be made available inside the agent container.",
+        help=(
+            "How Docker should be made available inside the agent container. "
+            "'dind' starts a sidecar docker:dind daemon."
+        ),
     )
     parser.add_argument(
         "--docker-bin",
@@ -98,9 +111,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra raw docker run argument. Repeatable.",
     )
     parser.add_argument(
+        "--entrypoint",
+        help="Override the runtime image entrypoint.",
+    )
+    parser.add_argument(
+        "--clear-entrypoint",
+        action="store_true",
+        help="Clear the runtime image entrypoint before running the command.",
+    )
+    parser.add_argument(
         "--dind-volume",
         metavar="VOLUME",
-        help="Persist nested Docker data in this Docker volume at /var/lib/docker.",
+        help="Persist sidecar/inline DinD data in this Docker volume at /var/lib/docker.",
+    )
+    parser.add_argument(
+        "--dind-image",
+        default=os.environ.get("AGENT_DIND_IMAGE", DEFAULT_DIND_IMAGE),
+        help=f"Sidecar DinD image used by --docker-mode dind. Default: {DEFAULT_DIND_IMAGE}",
+    )
+    parser.add_argument(
+        "--dind-name",
+        help="Optional name for the sidecar DinD container.",
+    )
+    parser.add_argument(
+        "--dind-run-volume",
+        help="Optional Docker volume name used to share /var/run with the sidecar DinD container.",
+    )
+    parser.add_argument(
+        "--keep-dind",
+        action="store_true",
+        help="Do not stop the sidecar DinD container or remove its /var/run volume.",
     )
     parser.add_argument(
         "--keep",
@@ -213,22 +253,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         ports=args.publish,
         run_args=args.run_arg,
         name=args.name,
+        entrypoint=args.entrypoint,
+        clear_entrypoint=args.clear_entrypoint,
+        dind_image=args.dind_image,
+        dind_name=args.dind_name,
+        dind_run_volume=args.dind_run_volume,
         dind_volume=args.dind_volume,
+        keep_dind=args.keep_dind,
         keep_container=args.keep,
         no_tty=args.no_tty,
         no_stdin=args.no_stdin,
         pull=args.pull,
     )
-    run_cmd = make_run_command(config)
-
-    if args.dry_run:
-        print(format_command(run_cmd))
-        return 0
-
-    try:
-        return subprocess.run(run_cmd).returncode
-    except KeyboardInterrupt:
-        return 130
+    return run_agent(config, dry_run=args.dry_run)
 
 
 def normalize_remainder(command: list[str]) -> list[str]:
@@ -283,10 +320,16 @@ def make_run_command(config: RunConfig) -> list[str]:
         cmd.extend(["--env", item])
     for volume in config.volumes:
         cmd.extend(["--volume", volume])
-    for port in config.ports:
-        cmd.extend(["--publish", port])
+    if not uses_sidecar_dind(config):
+        for port in config.ports:
+            cmd.extend(["--publish", port])
     for arg in config.run_args:
         cmd.append(arg)
+
+    if config.clear_entrypoint:
+        cmd.append("--entrypoint=")
+    elif config.entrypoint:
+        cmd.extend(["--entrypoint", config.entrypoint])
 
     cmd.append(config.image)
     cmd.extend(config.command)
@@ -311,10 +354,19 @@ def apply_docker_mode(cmd: list[str], config: RunConfig) -> None:
         cmd.extend(["--env", "AGENT_DOCKER_MODE=none"])
         return
 
-    cmd.extend(["--env", f"AGENT_DOCKER_MODE={config.docker_mode}"])
+    container_mode = "dind" if config.docker_mode == "inline-dind" else config.docker_mode
+    cmd.extend(["--env", f"AGENT_DOCKER_MODE={container_mode}"])
     cmd.extend(["--env", "DOCKER_HOST=unix:///var/run/docker.sock"])
 
     if config.docker_mode == "dind":
+        if not config.dind_run_volume:
+            raise ValueError("sidecar dind mode requires a dind_run_volume")
+        cmd.extend(["--volume", f"{config.dind_run_volume}:/var/run"])
+        if config.dind_name:
+            cmd.extend(["--network", f"container:{config.dind_name}"])
+        return
+
+    if config.docker_mode == "inline-dind":
         cmd.append("--privileged")
         if config.dind_volume:
             cmd.extend(["--volume", f"{config.dind_volume}:/var/lib/docker"])
@@ -330,6 +382,178 @@ def apply_docker_mode(cmd: list[str], config: RunConfig) -> None:
         return
 
     raise ValueError(f"unknown docker mode: {config.docker_mode}")
+
+
+def run_agent(config: RunConfig, *, dry_run: bool) -> int:
+    if config.docker_mode == "dind":
+        return run_with_sidecar_dind(config, dry_run=dry_run)
+
+    run_cmd = make_run_command(config)
+
+    if dry_run:
+        print(format_command(run_cmd))
+        return 0
+
+    try:
+        return subprocess.run(run_cmd).returncode
+    except KeyboardInterrupt:
+        return 130
+
+
+def run_with_sidecar_dind(config: RunConfig, *, dry_run: bool) -> int:
+    planned = with_sidecar_names(config)
+    create_volume_cmd = [
+        planned.docker_bin,
+        "volume",
+        "create",
+        planned.dind_run_volume or "",
+    ]
+    start_dind_cmd = make_sidecar_dind_command(planned)
+    wait_cmd = [planned.docker_bin, "exec", planned.dind_name or "", "docker", "info"]
+    run_cmd = make_run_command(planned)
+    cleanup_cmds = [
+        [planned.docker_bin, "rm", "-f", planned.dind_name or ""],
+        [planned.docker_bin, "volume", "rm", planned.dind_run_volume or ""],
+    ]
+
+    if dry_run:
+        print(format_command(create_volume_cmd))
+        print(format_command(start_dind_cmd))
+        print("# wait until DinD is ready:")
+        print(format_command(wait_cmd))
+        print(format_command(run_cmd))
+        if not planned.keep_dind:
+            print("# cleanup:")
+            for command in cleanup_cmds:
+                print(format_command(command))
+        return 0
+
+    subprocess.run(create_volume_cmd, check=True)
+    try:
+        subprocess.run(start_dind_cmd, check=True)
+        if not wait_for_dind(planned):
+            return 1
+        return subprocess.run(run_cmd).returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        if not planned.keep_dind:
+            cleanup_sidecar(cleanup_cmds)
+
+
+def with_sidecar_names(config: RunConfig) -> RunConfig:
+    token = workspace_token(config.host_cwd)
+    dind_name = config.dind_name or f"agent-dind-{token}-{os.getpid()}"
+    run_volume = config.dind_run_volume or f"agent-dind-run-{token}-{os.getpid()}"
+    return RunConfig(
+        docker_bin=config.docker_bin,
+        image=config.image,
+        workspace=config.workspace,
+        host_cwd=config.host_cwd,
+        docker_mode=config.docker_mode,
+        command=config.command,
+        env=config.env,
+        volumes=config.volumes,
+        ports=config.ports,
+        run_args=config.run_args,
+        name=config.name,
+        entrypoint=config.entrypoint,
+        clear_entrypoint=config.clear_entrypoint,
+        dind_image=config.dind_image,
+        dind_name=dind_name,
+        dind_run_volume=run_volume,
+        dind_volume=config.dind_volume,
+        keep_dind=config.keep_dind,
+        keep_container=config.keep_container,
+        no_tty=config.no_tty,
+        no_stdin=config.no_stdin,
+        pull=config.pull,
+    )
+
+
+def workspace_token(host_cwd: Path) -> str:
+    digest = hashlib.sha256(str(host_cwd).lower().encode("utf-8")).hexdigest()[:8]
+    slug = re.sub(r"[^a-z0-9_.-]+", "-", host_cwd.name.lower()).strip("-.")
+    return f"{slug or 'workspace'}-{digest}"[:48]
+
+
+def make_sidecar_dind_command(config: RunConfig) -> list[str]:
+    if not config.dind_name or not config.dind_run_volume:
+        raise ValueError("sidecar dind command requires dind_name and dind_run_volume")
+
+    cmd = [
+        config.docker_bin,
+        "run",
+        "--detach",
+    ]
+    if not config.keep_dind:
+        cmd.append("--rm")
+
+    cmd.extend(
+        [
+            "--privileged",
+            "--name",
+            config.dind_name,
+            "--env",
+            "DOCKER_TLS_CERTDIR=",
+            "--env",
+            "DOCKER_DRIVER=overlay2",
+            "--volume",
+            f"{config.dind_run_volume}:/var/run",
+            "--mount",
+            f"type=bind,source={config.host_cwd},target={config.workspace}",
+            "--workdir",
+            config.workspace,
+            "--label",
+            "yolo-agent.managed=true",
+        ]
+    )
+
+    for port in config.ports:
+        cmd.extend(["--publish", port])
+
+    if config.dind_volume:
+        cmd.extend(["--volume", f"{config.dind_volume}:/var/lib/docker"])
+
+    cmd.append(config.dind_image)
+    cmd.append("--host=unix:///var/run/docker.sock")
+    return cmd
+
+
+def wait_for_dind(config: RunConfig) -> bool:
+    timeout_seconds = int(os.environ.get("AGENT_DIND_WAIT_SECONDS", "60"))
+    wait_cmd = [config.docker_bin, "exec", config.dind_name or "", "docker", "info"]
+
+    for attempt in range(timeout_seconds):
+        result = subprocess.run(
+            wait_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            return True
+
+        if attempt == 0 or (attempt + 1) % 5 == 0:
+            print("agent: waiting for sidecar Docker daemon...", file=sys.stderr)
+        time.sleep(1)
+
+    logs_cmd = [config.docker_bin, "logs", config.dind_name or ""]
+    print("agent: sidecar Docker daemon did not become ready. Logs:", file=sys.stderr)
+    subprocess.run(logs_cmd)
+    return False
+
+
+def cleanup_sidecar(cleanup_cmds: Sequence[Sequence[str]]) -> None:
+    for command in cleanup_cmds:
+        subprocess.run(
+            list(command),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def uses_sidecar_dind(config: RunConfig) -> bool:
+    return config.docker_mode == "dind" and bool(config.dind_run_volume)
 
 
 def format_command(command: Sequence[str]) -> str:
