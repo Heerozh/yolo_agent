@@ -24,6 +24,7 @@ RUN curl -fsSL https://packages.microsoft.com/config/debian/12/packages-microsof
     && rm /tmp/packages-microsoft-prod.deb
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    locales \
     bzr=2.7.* \
     dnsutils \
     docker-buildx-plugin \
@@ -56,6 +57,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN git config --system core.whitespace cr-at-eol \
     && git config --system core.autocrlf input
+
+# install utf8
+RUN echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+RUN locale-gen
+RUN update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+
+# disable setuptools_scm read git logs, which can be slow in a container
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_HETUDB=0.0.0.dev0
 
 RUN groupadd --gid 1000 agent \
     && useradd --uid 1000 --gid agent --create-home --shell /bin/bash agent \
