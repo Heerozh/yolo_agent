@@ -157,6 +157,19 @@ agent -- bash -lc "pwd && docker version"
 
 Arguments after `--` are passed to the container command.
 
+For common agent CLIs, the launcher provides shortcuts:
+
+```powershell
+agent claude
+agent codex
+```
+
+`agent claude` runs `claude --dangerously-skip-permissions`. `agent codex` runs
+`codex --dangerously-bypass-approvals-and-sandbox`. Extra arguments are passed
+through after the default YOLO flag, for example `agent codex --model gpt-5.2`.
+Use `agent -- claude ...` or `agent -- codex ...` to run the raw command without
+shortcut expansion.
+
 ## Docker modes
 
 ### `dind`

@@ -31,6 +31,7 @@ from yolo_agent.cli import (
     parse_duration_seconds,
     project_slug,
     record_sidecar_use,
+    resolve_container_command,
     resolve_build_enabled,
     resolve_dind_reuse,
     save_sidecar_records,
@@ -492,6 +493,24 @@ class CliCommandTests(unittest.TestCase):
             normalize_remainder(["--", "bash", "-lc", "echo ok"]),
             ["bash", "-lc", "echo ok"],
         )
+
+    def test_claude_shortcut_adds_yolo_flag(self) -> None:
+        self.assertEqual(
+            resolve_container_command(["claude", "--model", "sonnet"]),
+            ["claude", "--dangerously-skip-permissions", "--model", "sonnet"],
+        )
+
+    def test_codex_shortcut_adds_yolo_flag(self) -> None:
+        self.assertEqual(
+            resolve_container_command(["codex", "--model", "gpt-5.2"]),
+            ["codex", "--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5.2"],
+        )
+
+    def test_separator_bypasses_tool_shortcut_expansion(self) -> None:
+        self.assertEqual(resolve_container_command(["--", "claude"]), ["claude"])
+
+    def test_unknown_container_command_is_unchanged(self) -> None:
+        self.assertEqual(resolve_container_command(["bash", "-lc", "echo ok"]), ["bash", "-lc", "echo ok"])
 
 
 def json_from_file(path: Path) -> dict[str, Any]:

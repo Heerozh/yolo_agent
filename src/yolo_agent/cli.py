@@ -33,6 +33,10 @@ CLAUDE_BYPASS_PERMISSION_MODE = "bypassPermissions"
 DEFAULT_UV_DATA_VOLUME = "agent-uv-data"
 DEFAULT_UV_DATA_ROOT = f"{DEFAULT_CONTAINER_HOME}/.local/share/yolo-agent/uv"
 DEFAULT_UV_CACHE_DIR = f"{DEFAULT_UV_DATA_ROOT}/cache"
+TOOL_SHORTCUT_COMMANDS = {
+    "claude": ("claude", "--dangerously-skip-permissions"),
+    "codex": ("codex", "--dangerously-bypass-approvals-and-sandbox"),
+}
 FALSE_VALUES = {"0", "false", "no", "off"}
 
 
@@ -306,7 +310,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
-        help="Optional command to run inside the container. Use -- before commands that start with '-'.",
+        help=(
+            "Optional command to run inside the container. Shortcuts: claude, codex. "
+            "Use -- before commands that start with '-' or to bypass shortcut expansion."
+        ),
     )
     return parser
 
@@ -333,7 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"agent: invalid --dind-idle-timeout: {exc}", file=sys.stderr)
         return 2
 
-    command = normalize_remainder(args.command)
+    command = resolve_container_command(args.command)
     host_cwd = Path.cwd().resolve()
     workspace = args.workspace or default_workspace_path(host_cwd)
     should_build = resolve_build_enabled(args.build)
@@ -412,6 +419,23 @@ def normalize_remainder(command: list[str]) -> list[str]:
     if command and command[0] == "--":
         return command[1:]
     return command
+
+
+def resolve_container_command(command: list[str]) -> list[str]:
+    if command and command[0] == "--":
+        return command[1:]
+    return expand_tool_shortcut(command)
+
+
+def expand_tool_shortcut(command: list[str]) -> list[str]:
+    if not command:
+        return []
+
+    shortcut = TOOL_SHORTCUT_COMMANDS.get(command[0].lower())
+    if shortcut is None:
+        return command
+
+    return [*shortcut, *command[1:]]
 
 
 def make_build_command(
