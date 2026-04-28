@@ -32,10 +32,29 @@ pipx install .
 ## Build the runtime image
 
 ```powershell
-agent --build --no-run
+agent --no-run
 ```
 
-This builds the root `Dockerfile` as `yolo-agent:latest`.
+`agent` builds the runtime image by default before it starts the container. The
+root `Dockerfile` is built as `yolo-agent:latest` unless `--image` or `--tag` is
+changed.
+
+Every build automatically includes a daily cache-bust argument:
+
+```powershell
+docker build --file Dockerfile --tag yolo-agent:latest `
+  --build-arg AGENT_CACHE_BUST=20260428 .
+```
+
+The value is the current local date in `YYYYMMDD` form. This means the first
+`agent` run each day refreshes the Dockerfile layers after `ARG
+AGENT_CACHE_BUST`; later runs on the same day reuse Docker cache.
+
+Skip the default build when needed:
+
+```powershell
+agent --no-build
+```
 
 ## Run from any project directory
 
@@ -47,6 +66,9 @@ agent
 The launcher runs roughly this shape of command:
 
 ```powershell
+docker build --file Dockerfile --tag yolo-agent:latest `
+  --build-arg AGENT_CACHE_BUST=20260428 .
+
 docker volume create agent-dind-run-...
 
 docker run -d --rm --privileged `
@@ -144,7 +166,12 @@ This does not expose Docker inside the container.
 
 ```powershell
 agent --image my-agent:dev
-agent --build --dockerfile Dockerfile --context .
+agent --tag my-agent:dev
+agent --no-build
+agent --dockerfile Dockerfile --context .
+agent --agent-cache-bust 20260428
+agent --no-agent-cache-bust
+agent --build-arg FOO=bar
 agent -e FOO=bar -p 8080:8080
 agent --clear-entrypoint -- bash -lc "docker version"
 agent --dry-run
@@ -159,6 +186,10 @@ To support the default `--docker-mode dind`, the agent image needs:
 The root `Dockerfile` is the current demo runtime image. It installs common
 developer tools plus Docker CLI/Buildx/Compose, which is enough for sidecar
 DinD.
+
+The launcher passes `AGENT_CACHE_BUST=YYYYMMDD` into this Dockerfile by default.
+The Dockerfile writes that value before installing agent CLIs, so the install
+layers are refreshed once per day.
 
 Prefer `CMD ["bash"]` over `ENTRYPOINT ["bash"]` for runtime images. A bash
 entrypoint makes explicit commands like `agent -- bash -lc "..."` awkward. If an

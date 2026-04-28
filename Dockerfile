@@ -65,7 +65,9 @@ RUN git config --global core.whitespace cr-at-eol \
     && git config --global core.autocrlf input
 
 # 5. 安装agent
-ARG AGENT_CACHE_BUST=1  # 外面改这个值可激发下面重建
+# agent launcher 默认每天传入 AGENT_CACHE_BUST=YYYYMMDD，让下面的安装层每日刷新一次。
+ARG AGENT_CACHE_BUST=1
+RUN echo "${AGENT_CACHE_BUST}" > /tmp/agent-cache-bust
 RUN npm i -g @openai/codex
 RUN npm install -g @google/gemini-cli
 RUN curl -fsSL https://claude.ai/install.sh | bash

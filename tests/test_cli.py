@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
 from yolo_agent.cli import (
     RunConfig,
+    daily_cache_bust_value,
     make_build_command,
+    make_build_args,
     make_run_command,
     make_sidecar_dind_command,
     normalize_remainder,
+    resolve_build_enabled,
 )
 
 
@@ -124,6 +128,7 @@ class CliCommandTests(unittest.TestCase):
             dockerfile=Path("Dockerfile"),
             context=Path("."),
             tag="yolo-agent:latest",
+            build_args=["AGENT_CACHE_BUST=20260428"],
         )
 
         self.assertEqual(
@@ -135,12 +140,44 @@ class CliCommandTests(unittest.TestCase):
                 str(Path("Dockerfile")),
                 "--tag",
                 "yolo-agent:latest",
+                "--build-arg",
+                "AGENT_CACHE_BUST=20260428",
                 ".",
             ],
         )
 
+    def test_daily_cache_bust_uses_yyyymmdd(self) -> None:
+        self.assertEqual(daily_cache_bust_value(date(2026, 4, 28)), "20260428")
+
+    def test_build_args_include_daily_cache_bust_before_extra_args(self) -> None:
+        args = make_build_args(
+            extra_args=["FOO=bar"],
+            agent_cache_bust=None,
+            no_agent_cache_bust=False,
+            today=date(2026, 4, 28),
+        )
+
+        self.assertEqual(args, ["AGENT_CACHE_BUST=20260428", "FOO=bar"])
+
+    def test_build_args_can_disable_cache_bust(self) -> None:
+        args = make_build_args(
+            extra_args=["FOO=bar"],
+            agent_cache_bust=None,
+            no_agent_cache_bust=True,
+            today=date(2026, 4, 28),
+        )
+
+        self.assertEqual(args, ["FOO=bar"])
+
+    def test_build_is_enabled_by_default(self) -> None:
+        self.assertTrue(resolve_build_enabled(None))
+        self.assertFalse(resolve_build_enabled(False))
+
     def test_normalize_remainder_strips_separator(self) -> None:
-        self.assertEqual(normalize_remainder(["--", "bash", "-lc", "echo ok"]), ["bash", "-lc", "echo ok"])
+        self.assertEqual(
+            normalize_remainder(["--", "bash", "-lc", "echo ok"]),
+            ["bash", "-lc", "echo ok"],
+        )
 
 
 if __name__ == "__main__":

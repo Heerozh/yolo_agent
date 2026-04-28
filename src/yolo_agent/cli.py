@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Sequence
 
@@ -18,6 +19,7 @@ DEFAULT_IMAGE = "yolo-agent:latest"
 DEFAULT_DOCKERFILE = "Dockerfile"
 DEFAULT_WORKSPACE = "/workspace"
 DEFAULT_DIND_IMAGE = "docker:dind"
+FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 @dataclass(frozen=True)
@@ -165,8 +167,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--build",
+        dest="build",
         action="store_true",
-        help="Build the runtime image before running it.",
+        default=None,
+        help="Build the runtime image before running it. This is the default.",
+    )
+    parser.add_argument(
+        "--no-build",
+        dest="build",
+        action="store_false",
+        help="Skip the default runtime image build before running.",
     )
     parser.add_argument(
         "--no-run",
@@ -176,17 +186,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dockerfile",
         default=DEFAULT_DOCKERFILE,
-        help=f"Dockerfile used with --build. Default: {DEFAULT_DOCKERFILE}",
+        help=f"Dockerfile used for the runtime image build. Default: {DEFAULT_DOCKERFILE}",
     )
     parser.add_argument(
         "--context",
         default=".",
-        help="Build context used with --build. Default: current project.",
+        help="Build context used for the runtime image build. Default: current project.",
     )
     parser.add_argument(
         "--tag",
-        default=DEFAULT_IMAGE,
-        help=f"Image tag used with --build. Default: {DEFAULT_IMAGE}",
+        help="Image tag used for the runtime image build. Default: same as --image.",
+    )
+    parser.add_argument(
+        "--build-arg",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Extra Docker build argument. Repeatable.",
+    )
+    parser.add_argument(
+        "--agent-cache-bust",
+        default=os.environ.get("AGENT_CACHE_BUST"),
+        metavar="VALUE",
+        help="Value passed as AGENT_CACHE_BUST. Default: today's local date as YYYYMMDD.",
+    )
+    parser.add_argument(
+        "--no-agent-cache-bust",
+        action="store_true",
+        help="Do not pass the automatic AGENT_CACHE_BUST build argument.",
     )
     parser.add_argument(
         "--dry-run",
@@ -219,13 +246,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     command = normalize_remainder(args.command)
     host_cwd = Path.cwd().resolve()
+    should_build = resolve_build_enabled(args.build)
+    build_tag = args.tag or args.image
+    build_args = make_build_args(
+        extra_args=args.build_arg,
+        agent_cache_bust=args.agent_cache_bust,
+        no_agent_cache_bust=args.no_agent_cache_bust,
+    )
 
-    if args.build:
+    if should_build:
         build_cmd = make_build_command(
             docker_bin=args.docker_bin,
             dockerfile=Path(args.dockerfile),
             context=Path(args.context),
-            tag=args.tag,
+            tag=build_tag,
+            build_args=build_args,
         )
         if args.dry_run:
             print(format_command(build_cmd))
@@ -238,7 +273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     image = args.image
-    if args.build and args.image == DEFAULT_IMAGE:
+    if should_build and args.tag and args.image == DEFAULT_IMAGE:
         image = args.tag
 
     config = RunConfig(
@@ -280,16 +315,51 @@ def make_build_command(
     dockerfile: Path,
     context: Path,
     tag: str,
+    build_args: Sequence[str] = (),
 ) -> list[str]:
-    return [
+    command = [
         docker_bin,
         "build",
         "--file",
         str(dockerfile),
         "--tag",
         tag,
-        str(context),
     ]
+    for build_arg in build_args:
+        command.extend(["--build-arg", build_arg])
+    command.append(str(context))
+    return command
+
+
+def resolve_build_enabled(cli_value: bool | None) -> bool:
+    if cli_value is not None:
+        return cli_value
+    return parse_bool(os.environ.get("AGENT_AUTO_BUILD"), default=True)
+
+
+def parse_bool(value: str | None, *, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() not in FALSE_VALUES
+
+
+def make_build_args(
+    *,
+    extra_args: Sequence[str],
+    agent_cache_bust: str | None,
+    no_agent_cache_bust: bool,
+    today: date | None = None,
+) -> list[str]:
+    build_args: list[str] = []
+    if not no_agent_cache_bust:
+        cache_bust = agent_cache_bust or daily_cache_bust_value(today)
+        build_args.append(f"AGENT_CACHE_BUST={cache_bust}")
+    build_args.extend(extra_args)
+    return build_args
+
+
+def daily_cache_bust_value(today: date | None = None) -> str:
+    return (today or date.today()).strftime("%Y%m%d")
 
 
 def make_run_command(config: RunConfig) -> list[str]:
