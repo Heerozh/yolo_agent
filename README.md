@@ -39,14 +39,19 @@ agent --no-run
 ```
 
 `agent` builds the runtime image by default before it starts the container. The
-root `Dockerfile` is built as `yolo-agent:latest` unless `--image` or `--tag` is
-changed.
+packaged runtime `Dockerfile` is built as `yolo-agent:latest` unless `--image`
+or `--tag` is changed. The default Dockerfile is fixed to
+`src/yolo_agent/runtime/Dockerfile` in this checkout, and to the same bundled
+file after packaging. It is not taken from the repository root or from the
+user's current project directory.
 
 Every build automatically includes a daily cache-bust argument:
 
 ```powershell
-docker build --file Dockerfile --tag yolo-agent:latest `
-  --build-arg AGENT_CACHE_BUST=20260428 .
+docker build --file C:\xsoft\yolo_agent\src\yolo_agent\runtime\Dockerfile `
+  --tag yolo-agent:latest `
+  --build-arg AGENT_CACHE_BUST=20260428 `
+  C:\xsoft\yolo_agent\src\yolo_agent\runtime
 ```
 
 The value is the current local date in `YYYYMMDD` form. This means the first
@@ -69,8 +74,10 @@ agent
 The launcher runs roughly this shape of command:
 
 ```powershell
-docker build --file Dockerfile --tag yolo-agent:latest `
-  --build-arg AGENT_CACHE_BUST=20260428 .
+docker build --file C:\xsoft\yolo_agent\src\yolo_agent\runtime\Dockerfile `
+  --tag yolo-agent:latest `
+  --build-arg AGENT_CACHE_BUST=20260428 `
+  C:\xsoft\yolo_agent\src\yolo_agent\runtime
 
 docker exec agent-dind-... docker info
 
@@ -210,7 +217,7 @@ This does not expose Docker inside the container.
 agent --image my-agent:dev
 agent --tag my-agent:dev
 agent --no-build
-agent --dockerfile Dockerfile --context .
+agent --dockerfile custom-agent.Dockerfile --context .
 agent --agent-cache-bust 20260428
 agent --no-agent-cache-bust
 agent --build-arg FOO=bar
@@ -230,9 +237,9 @@ To support the default `--docker-mode dind`, the agent image needs:
 
 - a Docker CLI
 
-The root `Dockerfile` is the current demo runtime image. It installs common
-developer tools plus Docker CLI/Buildx/Compose, which is enough for sidecar
-DinD.
+The packaged runtime `Dockerfile` is the current runtime image definition. It
+installs common developer tools plus Docker CLI/Buildx/Compose, which is enough
+for sidecar DinD.
 
 The launcher passes `AGENT_CACHE_BUST=YYYYMMDD` into this Dockerfile by default.
 The Dockerfile writes that value before installing agent CLIs, so the install

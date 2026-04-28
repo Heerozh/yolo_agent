@@ -55,7 +55,14 @@ class RunConfig:
     pull: str = "missing"
 
 
+@dataclass(frozen=True)
+class RuntimeBuildPaths:
+    dockerfile: Path
+    context: Path
+
+
 def build_parser() -> argparse.ArgumentParser:
+    runtime_defaults = default_runtime_build_paths()
     parser = argparse.ArgumentParser(
         prog="agent",
         description="Run the current directory inside a Docker-based agent environment.",
@@ -231,13 +238,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dockerfile",
-        default=DEFAULT_DOCKERFILE,
-        help=f"Dockerfile used for the runtime image build. Default: {DEFAULT_DOCKERFILE}",
+        default=str(runtime_defaults.dockerfile),
+        help=f"Dockerfile used for the runtime image build. Default: {runtime_defaults.dockerfile}",
     )
     parser.add_argument(
         "--context",
-        default=".",
-        help="Build context used for the runtime image build. Default: current project.",
+        default=str(runtime_defaults.context),
+        help=f"Build context used for the runtime image build. Default: {runtime_defaults.context}",
     )
     parser.add_argument(
         "--tag",
@@ -408,6 +415,12 @@ def parse_bool(value: str | None, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in FALSE_VALUES
+
+
+def default_runtime_build_paths() -> RuntimeBuildPaths:
+    package_dir = Path(__file__).resolve().parent
+    packaged_dockerfile = package_dir / "runtime" / DEFAULT_DOCKERFILE
+    return RuntimeBuildPaths(dockerfile=packaged_dockerfile, context=packaged_dockerfile.parent)
 
 
 def parse_duration_seconds(value: str) -> int:

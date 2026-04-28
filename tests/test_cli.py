@@ -9,6 +9,7 @@ from unittest.mock import patch
 from yolo_agent.cli import (
     RunConfig,
     daily_cache_bust_value,
+    default_runtime_build_paths,
     load_sidecar_records,
     make_build_command,
     make_build_args,
@@ -193,6 +194,14 @@ class CliCommandTests(unittest.TestCase):
                 ".",
             ],
         )
+
+    def test_default_runtime_build_paths_use_launcher_dockerfile(self) -> None:
+        paths = default_runtime_build_paths()
+
+        self.assertEqual(paths.dockerfile.name, "Dockerfile")
+        self.assertEqual(paths.dockerfile.parent.name, "runtime")
+        self.assertTrue(paths.dockerfile.exists())
+        self.assertTrue(paths.context.exists())
 
     def test_daily_cache_bust_uses_yyyymmdd(self) -> None:
         self.assertEqual(daily_cache_bust_value(date(2026, 4, 28)), "20260428")
