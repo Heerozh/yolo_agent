@@ -136,6 +136,19 @@ non-root user's home:
 Missing host paths are skipped. Disable these mounts with
 `--no-config-mounts`.
 
+The launcher also sets Docker-side uv storage defaults:
+
+```text
+UV_PROJECT_ENVIRONMENT=/home/agent/.local/share/yolo-agent/uv/project-envs/<project-token>
+UV_CACHE_DIR=/home/agent/.local/share/yolo-agent/uv/cache
+agent-uv-data -> /home/agent/.local/share/yolo-agent/uv
+```
+
+This keeps Linux virtual environments separate from any Windows host `.venv`,
+persists them across agent container restarts, and keeps the uv cache on the
+same Docker volume as the project environments. Override either variable with
+`-e`, or disable both defaults with `--no-uv-defaults`.
+
 ## Run a command inside the agent container
 
 ```powershell

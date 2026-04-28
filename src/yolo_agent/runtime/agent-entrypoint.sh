@@ -8,9 +8,18 @@ if [[ $# -eq 0 ]]; then
   set -- /bin/bash
 fi
 
+prepare_writable_dir() {
+  local path="$1"
+  if [[ -n "${path}" ]]; then
+    mkdir -p "${path}"
+    chown -R "${AGENT_USER}:${AGENT_USER}" "${path}" >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ "$(id -u)" == "0" ]]; then
   mkdir -p "${AGENT_HOME}"
   chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}" >/dev/null 2>&1 || true
+  prepare_writable_dir "${AGENT_UV_DATA_ROOT:-}"
 
   if [[ -S /var/run/docker.sock ]]; then
     socket_gid="$(stat -c '%g' /var/run/docker.sock)"

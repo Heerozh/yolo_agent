@@ -30,6 +30,9 @@ DEFAULT_CONFIG_MOUNTS = (
 )
 CLAUDE_SETTINGS_RELATIVE_PATH = Path(".claude_docker") / "settings.json"
 CLAUDE_BYPASS_PERMISSION_MODE = "bypassPermissions"
+DEFAULT_UV_DATA_VOLUME = "agent-uv-data"
+DEFAULT_UV_DATA_ROOT = f"{DEFAULT_CONTAINER_HOME}/.local/share/yolo-agent/uv"
+DEFAULT_UV_CACHE_DIR = f"{DEFAULT_UV_DATA_ROOT}/cache"
 FALSE_VALUES = {"0", "false", "no", "off"}
 
 
@@ -47,6 +50,7 @@ class RunConfig:
     run_args: list[str] = field(default_factory=list)
     config_mounts: bool = True
     config_home: Path = field(default_factory=Path.home)
+    uv_defaults: bool = True
     name: str | None = None
     entrypoint: str | None = None
     clear_entrypoint: bool = False
@@ -131,6 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--config-home",
         default=os.environ.get("AGENT_CONFIG_HOME"),
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-uv-defaults",
+        action="store_true",
+        help="Do not set Docker-side UV_PROJECT_ENVIRONMENT and UV_CACHE_DIR defaults.",
     )
     parser.add_argument(
         "-p",
@@ -352,6 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_args=args.run_arg,
         config_mounts=not args.no_config_mounts,
         config_home=Path(args.config_home).expanduser() if args.config_home else Path.home(),
+        uv_defaults=resolve_uv_defaults(args.no_uv_defaults),
         name=args.name,
         entrypoint=args.entrypoint,
         clear_entrypoint=args.clear_entrypoint,
@@ -436,6 +446,12 @@ def resolve_dind_reuse(cli_value: bool | None) -> bool:
     if cli_value is not None:
         return cli_value
     return parse_bool(os.environ.get("AGENT_DIND_REUSE"), default=True)
+
+
+def resolve_uv_defaults(disabled_by_cli: bool) -> bool:
+    if disabled_by_cli:
+        return False
+    return parse_bool(os.environ.get("AGENT_UV_DEFAULTS"), default=True)
 
 
 def parse_bool(value: str | None, *, default: bool) -> bool:
@@ -523,6 +539,7 @@ def make_run_command(config: RunConfig) -> list[str]:
         cmd.extend(["--label", "yolo-agent.role=agent"])
         cmd.extend(["--label", f"yolo-agent.sidecar={config.dind_name}"])
 
+    add_uv_defaults(cmd, config)
     for item in config.env:
         cmd.extend(["--env", item])
     add_config_mounts(cmd, config)
@@ -563,6 +580,35 @@ def add_config_mounts(cmd: list[str], config: RunConfig) -> None:
 
     for source, target in existing_config_mounts(config.config_home):
         cmd.extend(["--mount", f"type=bind,source={source},target={target}"])
+
+
+def add_uv_defaults(cmd: list[str], config: RunConfig) -> None:
+    if not config.uv_defaults:
+        return
+
+    user_env = env_names(config.env)
+    needs_uv_data_volume = False
+
+    if "UV_PROJECT_ENVIRONMENT" not in user_env:
+        cmd.extend(["--env", f"UV_PROJECT_ENVIRONMENT={default_uv_project_environment(config)}"])
+        needs_uv_data_volume = True
+
+    if "UV_CACHE_DIR" not in user_env:
+        cmd.extend(["--env", f"UV_CACHE_DIR={DEFAULT_UV_CACHE_DIR}"])
+        needs_uv_data_volume = True
+
+    if needs_uv_data_volume:
+        cmd.extend(["--env", f"AGENT_UV_DATA_ROOT={DEFAULT_UV_DATA_ROOT}"])
+        cmd.extend(["--volume", f"{DEFAULT_UV_DATA_VOLUME}:{DEFAULT_UV_DATA_ROOT}"])
+
+
+def env_names(env: Sequence[str]) -> set[str]:
+    return {item.split("=", 1)[0] for item in env}
+
+
+def default_uv_project_environment(config: RunConfig) -> str:
+    token = workspace_token(config.host_cwd, config.workspace)
+    return f"{DEFAULT_UV_DATA_ROOT}/project-envs/{token}"
 
 
 def existing_config_mounts(config_home: Path) -> list[tuple[Path, str]]:
@@ -761,6 +807,7 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
         run_args=config.run_args,
         config_mounts=config.config_mounts,
         config_home=config.config_home,
+        uv_defaults=config.uv_defaults,
         name=config.name,
         entrypoint=config.entrypoint,
         clear_entrypoint=config.clear_entrypoint,

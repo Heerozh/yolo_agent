@@ -11,11 +11,15 @@ from typing import Any
 from unittest.mock import patch
 
 from yolo_agent.cli import (
+    DEFAULT_UV_CACHE_DIR,
+    DEFAULT_UV_DATA_ROOT,
+    DEFAULT_UV_DATA_VOLUME,
     RunConfig,
     claude_settings_path,
     daily_cache_bust_value,
     default_workspace_path,
     default_runtime_build_paths,
+    default_uv_project_environment,
     ensure_claude_bypass_permissions,
     existing_config_mounts,
     load_sidecar_records,
@@ -254,6 +258,61 @@ class CliCommandTests(unittest.TestCase):
         finally:
             codex_path.rmdir()
             config_home.rmdir()
+
+    def test_uv_defaults_are_added_to_agent_container(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn(f"UV_PROJECT_ENVIRONMENT={default_uv_project_environment(config)}", command)
+        self.assertIn(f"UV_CACHE_DIR={DEFAULT_UV_CACHE_DIR}", command)
+        self.assertIn(f"AGENT_UV_DATA_ROOT={DEFAULT_UV_DATA_ROOT}", command)
+        self.assertIn(f"{DEFAULT_UV_DATA_VOLUME}:{DEFAULT_UV_DATA_ROOT}", command)
+
+    def test_user_uv_env_overrides_skip_matching_defaults(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            env=["UV_PROJECT_ENVIRONMENT=/custom/env", "UV_CACHE_DIR=/custom/cache"],
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn("UV_PROJECT_ENVIRONMENT=/custom/env", command)
+        self.assertIn("UV_CACHE_DIR=/custom/cache", command)
+        self.assertNotIn(f"UV_PROJECT_ENVIRONMENT={default_uv_project_environment(config)}", command)
+        self.assertNotIn(f"UV_CACHE_DIR={DEFAULT_UV_CACHE_DIR}", command)
+        self.assertNotIn(f"AGENT_UV_DATA_ROOT={DEFAULT_UV_DATA_ROOT}", command)
+        self.assertNotIn(f"{DEFAULT_UV_DATA_VOLUME}:{DEFAULT_UV_DATA_ROOT}", command)
+
+    def test_uv_defaults_can_be_disabled(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            uv_defaults=False,
+        )
+
+        command = make_run_command(config)
+
+        self.assertNotIn(f"UV_PROJECT_ENVIRONMENT={default_uv_project_environment(config)}", command)
+        self.assertNotIn(f"UV_CACHE_DIR={DEFAULT_UV_CACHE_DIR}", command)
+        self.assertNotIn(f"AGENT_UV_DATA_ROOT={DEFAULT_UV_DATA_ROOT}", command)
+        self.assertNotIn(f"{DEFAULT_UV_DATA_VOLUME}:{DEFAULT_UV_DATA_ROOT}", command)
 
     def test_claude_settings_are_created_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
