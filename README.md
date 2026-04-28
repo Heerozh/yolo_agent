@@ -29,7 +29,7 @@ environment.
 For a more global Windows install, use `pipx`:
 
 ```powershell
-pipx install .
+uvx pipx install . --force
 ```
 
 ## Build the runtime image

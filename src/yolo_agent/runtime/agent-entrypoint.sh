@@ -16,10 +16,22 @@ prepare_writable_dir() {
   fi
 }
 
+configure_git_safe_directory() {
+  local workspace="${AGENT_WORKSPACE:-}"
+  if [[ -z "${workspace}" ]]; then
+    return
+  fi
+
+  if ! gosu "${AGENT_USER}" git config --global --get-all safe.directory 2>/dev/null | grep -Fx -- "${workspace}" >/dev/null; then
+    gosu "${AGENT_USER}" git config --global --add safe.directory "${workspace}" >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ "$(id -u)" == "0" ]]; then
   mkdir -p "${AGENT_HOME}"
   chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}" >/dev/null 2>&1 || true
   prepare_writable_dir "${AGENT_UV_DATA_ROOT:-}"
+  configure_git_safe_directory
 
   if [[ -S /var/run/docker.sock ]]; then
     socket_gid="$(stat -c '%g' /var/run/docker.sock)"
