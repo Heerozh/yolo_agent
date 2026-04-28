@@ -10,6 +10,7 @@ from yolo_agent.cli import (
     RunConfig,
     daily_cache_bust_value,
     default_runtime_build_paths,
+    existing_config_mounts,
     load_sidecar_records,
     make_build_command,
     make_build_args,
@@ -37,6 +38,7 @@ class CliCommandTests(unittest.TestCase):
             docker_mode="dind",
             dind_name="agent-dind-test",
             dind_run_volume="agent-dind-run-test",
+            config_mounts=False,
             command=["bash"],
         )
 
@@ -163,6 +165,7 @@ class CliCommandTests(unittest.TestCase):
             workspace="/workspace",
             host_cwd=Path("C:/project").resolve(),
             docker_mode="none",
+            config_mounts=False,
             clear_entrypoint=True,
             command=["bash", "-lc", "echo ok"],
         )
@@ -170,6 +173,55 @@ class CliCommandTests(unittest.TestCase):
         command = make_run_command(config)
 
         self.assertLess(command.index("--entrypoint="), command.index("yolo-agent:latest"))
+
+    def test_existing_config_mounts_include_known_agent_configs(self) -> None:
+        config_home = Path("C:/tmp/yolo-agent-config-mounts-test")
+        paths = [
+            config_home / ".codex",
+            config_home / ".gemini",
+            config_home / ".claude_docker",
+        ]
+        file_path = config_home / ".claude_docker.json"
+        for path in paths:
+            path.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("{}", encoding="utf-8")
+
+        try:
+            self.assertEqual(
+                existing_config_mounts(config_home),
+                [
+                    (config_home / ".codex", "/home/agent/.codex"),
+                    (config_home / ".gemini", "/home/agent/.gemini"),
+                    (config_home / ".claude_docker", "/home/agent/.claude"),
+                    (config_home / ".claude_docker.json", "/home/agent/.claude.json"),
+                ],
+            )
+        finally:
+            file_path.unlink(missing_ok=True)
+            for path in reversed(paths):
+                path.rmdir()
+            config_home.rmdir()
+
+    def test_config_mounts_are_added_to_agent_container(self) -> None:
+        config_home = Path("C:/tmp/yolo-agent-config-run-test")
+        codex_path = config_home / ".codex"
+        codex_path.mkdir(parents=True, exist_ok=True)
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_home=config_home,
+        )
+
+        try:
+            command = make_run_command(config)
+
+            self.assertIn(f"type=bind,source={codex_path},target=/home/agent/.codex", command)
+        finally:
+            codex_path.rmdir()
+            config_home.rmdir()
 
     def test_build_command(self) -> None:
         command = make_build_command(

@@ -104,6 +104,24 @@ docker run --rm -it `
 Inside the container, `/workspace` is the directory where the user ran
 `agent`.
 
+The agent container runs commands as the non-root `agent` user. A root
+entrypoint performs startup setup, fixes Docker socket group access, then drops
+to that user. This is required for tools such as `claude
+--dangerously-skip-permissions`, which refuse to run as root.
+
+The agent container also mounts existing host agent config paths into the
+non-root user's home:
+
+```text
+%USERPROFILE%\.codex              -> /home/agent/.codex
+%USERPROFILE%\.gemini             -> /home/agent/.gemini
+%USERPROFILE%\.claude_docker      -> /home/agent/.claude
+%USERPROFILE%\.claude_docker.json -> /home/agent/.claude.json
+```
+
+Missing host paths are skipped. Disable these mounts with
+`--no-config-mounts`.
+
 ## Run a command inside the agent container
 
 ```powershell
@@ -226,6 +244,7 @@ agent --reset-dind
 agent --stop-dind
 agent --dind-idle-timeout 30m
 agent --no-dind-idle-cleanup
+agent --no-config-mounts
 agent -e FOO=bar -p 8080:8080
 agent --clear-entrypoint -- bash -lc "docker version"
 agent --dry-run

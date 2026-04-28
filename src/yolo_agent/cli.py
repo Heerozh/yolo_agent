@@ -21,6 +21,13 @@ DEFAULT_DOCKERFILE = "Dockerfile"
 DEFAULT_WORKSPACE = "/workspace"
 DEFAULT_DIND_IMAGE = "docker:dind"
 DEFAULT_DIND_IDLE_TIMEOUT = "1h"
+DEFAULT_CONTAINER_HOME = "/home/agent"
+DEFAULT_CONFIG_MOUNTS = (
+    (".codex", f"{DEFAULT_CONTAINER_HOME}/.codex"),
+    (".gemini", f"{DEFAULT_CONTAINER_HOME}/.gemini"),
+    (".claude_docker", f"{DEFAULT_CONTAINER_HOME}/.claude"),
+    (".claude_docker.json", f"{DEFAULT_CONTAINER_HOME}/.claude.json"),
+)
 FALSE_VALUES = {"0", "false", "no", "off"}
 
 
@@ -36,6 +43,8 @@ class RunConfig:
     volumes: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
     run_args: list[str] = field(default_factory=list)
+    config_mounts: bool = True
+    config_home: Path = field(default_factory=Path.home)
     name: str | None = None
     entrypoint: str | None = None
     clear_entrypoint: bool = False
@@ -110,6 +119,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="SPEC",
         help="Additional raw Docker volume spec. Repeatable.",
+    )
+    parser.add_argument(
+        "--no-config-mounts",
+        action="store_true",
+        help="Do not mount host agent config directories into /root.",
+    )
+    parser.add_argument(
+        "--config-home",
+        default=os.environ.get("AGENT_CONFIG_HOME"),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-p",
@@ -328,6 +347,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         volumes=args.volume,
         ports=args.publish,
         run_args=args.run_arg,
+        config_mounts=not args.no_config_mounts,
+        config_home=Path(args.config_home).expanduser() if args.config_home else Path.home(),
         name=args.name,
         entrypoint=args.entrypoint,
         clear_entrypoint=args.clear_entrypoint,
@@ -489,6 +510,7 @@ def make_run_command(config: RunConfig) -> list[str]:
 
     for item in config.env:
         cmd.extend(["--env", item])
+    add_config_mounts(cmd, config)
     for volume in config.volumes:
         cmd.extend(["--volume", volume])
     if not uses_sidecar_dind(config):
@@ -518,6 +540,23 @@ def add_workspace_mount(cmd: list[str], host_cwd: Path, workspace: str) -> None:
             f"type=bind,source={host_cwd},target={workspace}",
         ]
     )
+
+
+def add_config_mounts(cmd: list[str], config: RunConfig) -> None:
+    if not config.config_mounts:
+        return
+
+    for source, target in existing_config_mounts(config.config_home):
+        cmd.extend(["--mount", f"type=bind,source={source},target={target}"])
+
+
+def existing_config_mounts(config_home: Path) -> list[tuple[Path, str]]:
+    mounts: list[tuple[Path, str]] = []
+    for relative_path, target in DEFAULT_CONFIG_MOUNTS:
+        source = config_home / relative_path
+        if source.exists():
+            mounts.append((source, target))
+    return mounts
 
 
 def apply_docker_mode(cmd: list[str], config: RunConfig) -> None:
@@ -646,6 +685,8 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
         volumes=config.volumes,
         ports=config.ports,
         run_args=config.run_args,
+        config_mounts=config.config_mounts,
+        config_home=config.config_home,
         name=config.name,
         entrypoint=config.entrypoint,
         clear_entrypoint=config.clear_entrypoint,

@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gettext \
     git \
     git-lfs \
+    gosu \
     vim \
     inotify-tools \
     iputils-ping \
@@ -44,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep \
     rsync \
     sqlite3 \
+    sudo \
     tzdata \
     unzip \
     uuid-dev \
@@ -52,18 +54,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git config --global core.whitespace cr-at-eol \
-    && git config --global core.autocrlf input
+RUN git config --system core.whitespace cr-at-eol \
+    && git config --system core.autocrlf input
+
+RUN groupadd --gid 1000 agent \
+    && useradd --uid 1000 --gid agent --create-home --shell /bin/bash agent \
+    && echo 'agent ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/agent \
+    && chmod 0440 /etc/sudoers.d/agent
 
 ARG AGENT_CACHE_BUST=1
 RUN echo "${AGENT_CACHE_BUST}" > /tmp/agent-cache-bust
 RUN npm i -g @openai/codex
 RUN npm install -g @google/gemini-cli
+
+USER agent
 RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
-ENV HOME=/root
+USER root
+
+COPY agent-entrypoint.sh /usr/local/bin/agent-entrypoint
+RUN chmod +x /usr/local/bin/agent-entrypoint
+
+ENV HOME=/home/agent
+ENV PATH=/home/agent/.local/bin:${PATH}
 
 WORKDIR /workspace
 
+ENTRYPOINT ["/usr/local/bin/agent-entrypoint"]
 CMD ["/bin/bash"]

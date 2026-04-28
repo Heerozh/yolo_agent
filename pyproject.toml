@@ -22,3 +22,4 @@ packages = ["src/yolo_agent"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/yolo_agent/runtime/Dockerfile" = "yolo_agent/runtime/Dockerfile"
+"src/yolo_agent/runtime/agent-entrypoint.sh" = "yolo_agent/runtime/agent-entrypoint.sh"
