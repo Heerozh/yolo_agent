@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yolo-agent"
+version = "0.1.0"
+description = "Windows-friendly launcher for running an agent inside a Docker workspace."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "YOLO Agent" }
+]
+dependencies = []
+
+[project.scripts]
+agent = "yolo_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yolo_agent"]
