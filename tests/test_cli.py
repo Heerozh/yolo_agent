@@ -9,12 +9,20 @@ from unittest.mock import patch
 from yolo_agent.cli import (
     RunConfig,
     daily_cache_bust_value,
+    load_sidecar_records,
     make_build_command,
     make_build_args,
     make_run_command,
     make_sidecar_dind_command,
     normalize_remainder,
+    parse_duration_seconds,
+    record_sidecar_use,
     resolve_build_enabled,
+    resolve_dind_reuse,
+    save_sidecar_records,
+    should_cleanup_dind_after_run,
+    stale_sidecar_records,
+    with_sidecar_names,
 )
 
 
@@ -43,6 +51,8 @@ class CliCommandTests(unittest.TestCase):
         self.assertIn("DOCKER_HOST=unix:///var/run/docker.sock", command)
         self.assertIn("agent-dind-run-test:/var/run", command)
         self.assertIn("container:agent-dind-test", command)
+        self.assertIn("yolo-agent.role=agent", command)
+        self.assertIn("yolo-agent.sidecar=agent-dind-test", command)
         self.assertIn("bash", command)
 
         mount_index = command.index("--mount")
@@ -72,6 +82,44 @@ class CliCommandTests(unittest.TestCase):
         self.assertIn("8080:8080", command)
         self.assertIn("docker:dind", command)
         self.assertIn("--host=unix:///var/run/docker.sock", command)
+        self.assertNotIn("--rm", command)
+        self.assertIn("yolo-agent.role=dind", command)
+        self.assertIn("yolo-agent.run-volume=agent-dind-run-test", command)
+
+    def test_non_reused_sidecar_dind_is_removed_after_run(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+            dind_image="docker:dind",
+            dind_name="agent-dind-test",
+            dind_run_volume="agent-dind-run-test",
+            dind_reuse=False,
+        )
+
+        command = make_sidecar_dind_command(config)
+
+        self.assertIn("--rm", command)
+        self.assertTrue(should_cleanup_dind_after_run(config))
+
+    def test_reused_sidecar_names_are_stable_for_workspace(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+        )
+
+        first = with_sidecar_names(config)
+        second = with_sidecar_names(config)
+
+        self.assertEqual(first.dind_name, second.dind_name)
+        self.assertEqual(first.dind_run_volume, second.dind_run_volume)
+        self.assertTrue(first.dind_name.startswith("agent-dind-project-"))
+        self.assertTrue(first.dind_run_volume.startswith("agent-dind-run-project-"))
 
     def test_inline_dind_mode_adds_privileged_to_agent_container(self) -> None:
         config = RunConfig(
@@ -172,6 +220,65 @@ class CliCommandTests(unittest.TestCase):
     def test_build_is_enabled_by_default(self) -> None:
         self.assertTrue(resolve_build_enabled(None))
         self.assertFalse(resolve_build_enabled(False))
+
+    def test_dind_reuse_is_enabled_by_default(self) -> None:
+        self.assertTrue(resolve_dind_reuse(None))
+        self.assertFalse(resolve_dind_reuse(False))
+
+    def test_parse_duration_seconds(self) -> None:
+        self.assertEqual(parse_duration_seconds("30m"), 1800)
+        self.assertEqual(parse_duration_seconds("1h"), 3600)
+        self.assertEqual(parse_duration_seconds("3600"), 3600)
+
+    def test_stale_sidecar_records_skips_current_sidecar(self) -> None:
+        records = {
+            "agent-dind-current": {"last_used": 10, "run_volume": "current-run"},
+            "agent-dind-old": {"last_used": 10, "run_volume": "old-run"},
+            "agent-dind-new": {"last_used": 1000, "run_volume": "new-run"},
+        }
+
+        stale = stale_sidecar_records(records, exclude_name="agent-dind-current", cutoff=100)
+
+        self.assertEqual(stale, [("agent-dind-old", {"last_used": 10, "run_volume": "old-run"})])
+
+    def test_sidecar_state_round_trip(self) -> None:
+        state_file = Path("C:/tmp/yolo-agent-test-state.json")
+        state_file.unlink(missing_ok=True)
+        try:
+            save_sidecar_records(
+                state_file,
+                {"agent-dind-old": {"last_used": 10, "run_volume": "old-run"}},
+            )
+
+            self.assertEqual(
+                load_sidecar_records(state_file),
+                {"agent-dind-old": {"last_used": 10, "run_volume": "old-run"}},
+            )
+        finally:
+            state_file.unlink(missing_ok=True)
+
+    def test_record_sidecar_use_writes_current_sidecar(self) -> None:
+        state_file = Path("C:/tmp/yolo-agent-test-record-state.json")
+        state_file.unlink(missing_ok=True)
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+            dind_name="agent-dind-current",
+            dind_run_volume="agent-dind-run-current",
+            state_file=state_file,
+        )
+
+        try:
+            record_sidecar_use(config)
+            records = load_sidecar_records(state_file)
+
+            self.assertIn("agent-dind-current", records)
+            self.assertEqual(records["agent-dind-current"]["run_volume"], "agent-dind-run-current")
+        finally:
+            state_file.unlink(missing_ok=True)
 
     def test_normalize_remainder_strips_separator(self) -> None:
         self.assertEqual(

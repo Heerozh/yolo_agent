@@ -3,16 +3,19 @@
 `agent` is a small Windows-friendly Python CLI that starts the current directory
 inside a Docker-based agent environment.
 
-The default mode is real Docker-in-Docker (`dind`) using a sidecar daemon:
+The default mode is real Docker-in-Docker (`dind`) using a reusable sidecar
+daemon:
 
-1. start a temporary privileged `docker:dind` container
-2. mount the user's current directory into that daemon container
-3. start the agent container with the same workspace mount
-4. share the sidecar daemon's `/var/run/docker.sock` and network namespace with
+1. reuse a ready workspace-scoped `docker:dind` container when one exists
+2. otherwise start a privileged `docker:dind` container
+3. mount the user's current directory into that daemon container
+4. start the agent container with the same workspace mount
+5. share the sidecar daemon's `/var/run/docker.sock` and network namespace with
    the agent container
 
 That means the agent image only needs the Docker CLI. It does not need to run
-`dockerd` itself.
+`dockerd` itself. The first run in a workspace waits for Docker-in-Docker to
+become ready; later runs reuse the already-ready daemon.
 
 ## Install for local development
 
@@ -69,9 +72,11 @@ The launcher runs roughly this shape of command:
 docker build --file Dockerfile --tag yolo-agent:latest `
   --build-arg AGENT_CACHE_BUST=20260428 .
 
+docker exec agent-dind-... docker info
+
 docker volume create agent-dind-run-...
 
-docker run -d --rm --privileged `
+docker run -d --privileged `
   --name agent-dind-... `
   -e DOCKER_TLS_CERTDIR= `
   -e DOCKER_DRIVER=overlay2 `
@@ -108,11 +113,25 @@ Arguments after `--` are passed to the container command.
 agent --docker-mode dind
 ```
 
-This is the default. A temporary privileged `docker:dind` sidecar is started,
-and the agent container talks to that daemon through a shared Unix socket.
+This is the default. A workspace-scoped privileged `docker:dind` sidecar is
+started when needed, and the agent container talks to that daemon through a
+shared Unix socket.
 
 Use this when project tests run nested Docker containers and expect bind mounts
 from paths like `/workspace` to work.
+
+The sidecar is reused by default, so the roughly 15 second DinD startup cost is
+paid only the first time for a workspace. Nested Docker images and containers
+also remain available while the sidecar is running.
+
+Each normal `agent` run also cleans old reused sidecars before starting the
+current one. The launcher records sidecar usage in a local state file and
+removes sidecars idle for more than one hour, except the sidecar that is about
+to be used. If a sidecar still has a running agent container attached to it,
+cleanup skips it.
+
+On Windows, the state file defaults to
+`%LOCALAPPDATA%\yolo-agent\state.json`.
 
 Optionally persist nested Docker state:
 
@@ -131,6 +150,29 @@ Keep the sidecar daemon around for debugging:
 ```powershell
 agent --docker-mode dind --keep-dind
 ```
+
+Force a fresh sidecar for one run:
+
+```powershell
+agent --docker-mode dind --no-dind-reuse
+```
+
+Reset or stop the reusable sidecar for the current workspace:
+
+```powershell
+agent --reset-dind
+agent --stop-dind
+```
+
+Adjust or disable idle cleanup:
+
+```powershell
+agent --dind-idle-timeout 30m
+agent --no-dind-idle-cleanup
+```
+
+Published ports are part of the reusable sidecar identity. If you change `-p`
+values, `agent` uses a separate sidecar for that port set.
 
 ### `inline-dind`
 
@@ -172,6 +214,11 @@ agent --dockerfile Dockerfile --context .
 agent --agent-cache-bust 20260428
 agent --no-agent-cache-bust
 agent --build-arg FOO=bar
+agent --no-dind-reuse
+agent --reset-dind
+agent --stop-dind
+agent --dind-idle-timeout 30m
+agent --no-dind-idle-cleanup
 agent -e FOO=bar -p 8080:8080
 agent --clear-entrypoint -- bash -lc "docker version"
 agent --dry-run
