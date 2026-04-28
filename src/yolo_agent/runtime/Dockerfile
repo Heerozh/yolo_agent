@@ -69,8 +69,6 @@ RUN npm install -g @google/gemini-cli
 
 USER agent
 RUN curl -fsSL https://claude.ai/install.sh | bash
-RUN mkdir -p /home/agent/.claude \
-    && echo '{"permissions":{"defaultMode":"bypassPermissions"}}' > /home/agent/.claude/settings.json
 RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
 USER root

@@ -111,13 +111,17 @@ entrypoint performs startup setup, fixes Docker socket group access, then drops
 to that user. This is required for tools such as `claude
 --dangerously-skip-permissions`, which refuse to run as root.
 
-Claude Code is configured to bypass permissions by default at startup by writing:
+Before the container starts, the launcher ensures the host-side Claude settings
+file includes:
 
 ```json
 {"permissions":{"defaultMode":"bypassPermissions"}}
 ```
 
-to `/home/agent/.claude/settings.json`.
+in `%USERPROFILE%\.claude_docker\settings.json`. It preserves existing JSON and
+does not rewrite the file when `permissions.defaultMode` already exists. If the
+file is not valid JSON, the launcher prints a warning and leaves it untouched.
+The runtime Dockerfile and container entrypoint do not write this settings file.
 
 The agent container also mounts existing host agent config paths into the
 non-root user's home:

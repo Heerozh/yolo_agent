@@ -28,6 +28,8 @@ DEFAULT_CONFIG_MOUNTS = (
     (".claude_docker", f"{DEFAULT_CONTAINER_HOME}/.claude"),
     (".claude_docker.json", f"{DEFAULT_CONTAINER_HOME}/.claude.json"),
 )
+CLAUDE_SETTINGS_RELATIVE_PATH = Path(".claude_docker") / "settings.json"
+CLAUDE_BYPASS_PERMISSION_MODE = "bypassPermissions"
 FALSE_VALUES = {"0", "false", "no", "off"}
 
 
@@ -390,6 +392,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.no_run:
         return 0
 
+    if not args.dry_run:
+        prepare_host_config(config)
+
     return run_agent(config, dry_run=args.dry_run)
 
 
@@ -567,6 +572,65 @@ def existing_config_mounts(config_home: Path) -> list[tuple[Path, str]]:
         if source.exists():
             mounts.append((source, target))
     return mounts
+
+
+def prepare_host_config(config: RunConfig) -> None:
+    if not config.config_mounts:
+        return
+
+    ensure_claude_bypass_permissions(config.config_home)
+
+
+def claude_settings_path(config_home: Path) -> Path:
+    return config_home / CLAUDE_SETTINGS_RELATIVE_PATH
+
+
+def ensure_claude_bypass_permissions(config_home: Path) -> bool:
+    settings_path = claude_settings_path(config_home)
+    settings: dict[str, Any] = {}
+
+    if settings_path.exists():
+        try:
+            parsed = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            print(f"agent: cannot update Claude settings at {settings_path}: {exc}", file=sys.stderr)
+            return False
+
+        if not isinstance(parsed, dict):
+            print(
+                f"agent: cannot update Claude settings at {settings_path}: expected a JSON object",
+                file=sys.stderr,
+            )
+            return False
+
+        settings = parsed
+
+    changed = merge_claude_bypass_permissions(settings)
+    if not changed:
+        return False
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = settings_path.with_name(f"{settings_path.name}.tmp")
+    temp_path.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp_path.replace(settings_path)
+    return True
+
+
+def merge_claude_bypass_permissions(settings: dict[str, Any]) -> bool:
+    permissions = settings.get("permissions")
+
+    if permissions is None:
+        settings["permissions"] = {"defaultMode": CLAUDE_BYPASS_PERMISSION_MODE}
+        return True
+
+    if not isinstance(permissions, dict):
+        return False
+
+    if "defaultMode" in permissions:
+        return False
+
+    permissions["defaultMode"] = CLAUDE_BYPASS_PERMISSION_MODE
+    return True
 
 
 def apply_docker_mode(cmd: list[str], config: RunConfig) -> None:

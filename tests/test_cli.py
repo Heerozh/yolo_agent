@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import io
+import json
 import sys
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from yolo_agent.cli import (
     RunConfig,
+    claude_settings_path,
     daily_cache_bust_value,
     default_workspace_path,
     default_runtime_build_paths,
+    ensure_claude_bypass_permissions,
     existing_config_mounts,
     load_sidecar_records,
     make_build_command,
@@ -249,6 +255,61 @@ class CliCommandTests(unittest.TestCase):
             codex_path.rmdir()
             config_home.rmdir()
 
+    def test_claude_settings_are_created_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_home = Path(temp_dir)
+
+            changed = ensure_claude_bypass_permissions(config_home)
+
+            self.assertTrue(changed)
+            data = json_from_file(claude_settings_path(config_home))
+            self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
+
+    def test_claude_settings_keep_existing_default_mode_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_home = Path(temp_dir)
+            settings_path = claude_settings_path(config_home)
+            settings_path.parent.mkdir(parents=True)
+            original = '{"permissions":{"defaultMode":"ask"}}'
+            settings_path.write_text(original, encoding="utf-8")
+
+            changed = ensure_claude_bypass_permissions(config_home)
+
+            self.assertFalse(changed)
+            self.assertEqual(settings_path.read_text(encoding="utf-8"), original)
+
+    def test_claude_settings_add_default_mode_to_existing_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_home = Path(temp_dir)
+            settings_path = claude_settings_path(config_home)
+            settings_path.parent.mkdir(parents=True)
+            settings_path.write_text(
+                '{"theme":"dark","permissions":{"allow":["Bash(git status)"]}}',
+                encoding="utf-8",
+            )
+
+            changed = ensure_claude_bypass_permissions(config_home)
+
+            self.assertTrue(changed)
+            data = json_from_file(settings_path)
+            self.assertEqual(data["theme"], "dark")
+            self.assertEqual(data["permissions"]["allow"], ["Bash(git status)"])
+            self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
+
+    def test_claude_settings_invalid_json_is_not_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_home = Path(temp_dir)
+            settings_path = claude_settings_path(config_home)
+            settings_path.parent.mkdir(parents=True)
+            original = "{not-json"
+            settings_path.write_text(original, encoding="utf-8")
+
+            with patch("sys.stderr", new=io.StringIO()):
+                changed = ensure_claude_bypass_permissions(config_home)
+
+            self.assertFalse(changed)
+            self.assertEqual(settings_path.read_text(encoding="utf-8"), original)
+
     def test_build_command(self) -> None:
         command = make_build_command(
             docker_bin="docker",
@@ -372,6 +433,12 @@ class CliCommandTests(unittest.TestCase):
             normalize_remainder(["--", "bash", "-lc", "echo ok"]),
             ["bash", "-lc", "echo ok"],
         )
+
+
+def json_from_file(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
 
 
 if __name__ == "__main__":
