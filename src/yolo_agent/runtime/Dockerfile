@@ -65,6 +65,8 @@ RUN update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV LANGUAGE=en_US:en
+# speed up python by putting pycache in tmpfs
+ENV PYTHONPYCACHEPREFIX=/tmp/pycache
 
 # disable setuptools_scm read git logs, which can be slow in a container
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_HETUDB=0.0.0.dev0
