@@ -22,6 +22,8 @@ from yolo_agent.cli import (
     default_uv_project_environment,
     ensure_claude_bypass_permissions,
     existing_config_mounts,
+    github_cli_token_envs_for_run,
+    prepare_docker_run_environment,
     load_sidecar_records,
     make_build_command,
     make_build_args,
@@ -296,6 +298,79 @@ class CliCommandTests(unittest.TestCase):
         self.assertNotIn(f"UV_CACHE_DIR={DEFAULT_UV_CACHE_DIR}", command)
         self.assertNotIn(f"AGENT_UV_DATA_ROOT={DEFAULT_UV_DATA_ROOT}", command)
         self.assertNotIn(f"{DEFAULT_UV_DATA_VOLUME}:{DEFAULT_UV_DATA_ROOT}", command)
+
+    def test_github_cli_token_envs_are_passed_by_name(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            github_token_envs=("GH_TOKEN", "GITHUB_TOKEN"),
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn("GH_TOKEN", command)
+        self.assertIn("GITHUB_TOKEN", command)
+        self.assertNotIn("GH_TOKEN=", command)
+        self.assertNotIn("GITHUB_TOKEN=", command)
+
+    def test_user_github_cli_token_env_overrides_skip_matching_pass_through(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            env=["GH_TOKEN=manual"],
+            github_token_envs=("GH_TOKEN", "GITHUB_TOKEN"),
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn("GH_TOKEN=manual", command)
+        self.assertNotIn("GH_TOKEN", command)
+        self.assertNotIn("GITHUB_TOKEN", command)
+
+    def test_github_cli_token_envs_for_run_uses_host_environment(self) -> None:
+        self.assertEqual(
+            github_cli_token_envs_for_run([], {"GH_TOKEN": "secret", "GITHUB_TOKEN": "secret2"}),
+            ("GH_TOKEN", "GITHUB_TOKEN"),
+        )
+        self.assertEqual(
+            github_cli_token_envs_for_run(["GH_TOKEN=manual"], {"GH_TOKEN": "secret"}),
+            (),
+        )
+        self.assertEqual(
+            github_cli_token_envs_for_run(["GITHUB_TOKEN=manual"], {"GH_TOKEN": "secret"}),
+            (),
+        )
+
+    def test_prepare_docker_run_environment_reads_host_gh_token_without_exposing_value(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+        )
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "yolo_agent.cli.read_github_cli_token",
+            return_value="cli-token",
+        ):
+            run_config, docker_env = prepare_docker_run_environment(config, allow_gh_auth_token=True)
+
+        command = make_run_command(run_config)
+
+        self.assertEqual(run_config.github_token_envs, ("GH_TOKEN",))
+        self.assertEqual(docker_env["GH_TOKEN"], "cli-token")
+        self.assertIn("GH_TOKEN", command)
+        self.assertNotIn("cli-token", command)
 
     def test_uv_defaults_can_be_disabled(self) -> None:
         config = RunConfig(

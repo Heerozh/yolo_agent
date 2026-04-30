@@ -10,10 +10,10 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 
 DEFAULT_IMAGE = "yolo-agent:latest"
@@ -33,6 +33,7 @@ CLAUDE_BYPASS_PERMISSION_MODE = "bypassPermissions"
 DEFAULT_UV_DATA_VOLUME = "agent-uv-data"
 DEFAULT_UV_DATA_ROOT = f"{DEFAULT_CONTAINER_HOME}/.local/share/yolo-agent/uv"
 DEFAULT_UV_CACHE_DIR = f"{DEFAULT_UV_DATA_ROOT}/cache"
+GITHUB_CLI_TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
 TOOL_SHORTCUT_COMMANDS = {
     "claude": ("claude", "--dangerously-skip-permissions"),
     "codex": ("codex", "--dangerously-bypass-approvals-and-sandbox"),
@@ -49,6 +50,7 @@ class RunConfig:
     docker_mode: str
     command: list[str] = field(default_factory=list)
     env: list[str] = field(default_factory=list)
+    github_token_envs: tuple[str, ...] = ()
     volumes: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
     run_args: list[str] = field(default_factory=list)
@@ -564,6 +566,7 @@ def make_run_command(config: RunConfig) -> list[str]:
         cmd.extend(["--label", f"yolo-agent.sidecar={config.dind_name}"])
 
     add_uv_defaults(cmd, config)
+    add_github_cli_token_env(cmd, config)
     for item in config.env:
         cmd.extend(["--env", item])
     add_config_mounts(cmd, config)
@@ -624,6 +627,16 @@ def add_uv_defaults(cmd: list[str], config: RunConfig) -> None:
     if needs_uv_data_volume:
         cmd.extend(["--env", f"AGENT_UV_DATA_ROOT={DEFAULT_UV_DATA_ROOT}"])
         cmd.extend(["--volume", f"{DEFAULT_UV_DATA_VOLUME}:{DEFAULT_UV_DATA_ROOT}"])
+
+
+def add_github_cli_token_env(cmd: list[str], config: RunConfig) -> None:
+    if has_explicit_env_value(config.env, GITHUB_CLI_TOKEN_ENV_NAMES):
+        return
+
+    user_env = env_names(config.env)
+    for name in config.github_token_envs:
+        if name not in user_env:
+            cmd.extend(["--env", name])
 
 
 def env_names(env: Sequence[str]) -> set[str]:
@@ -738,18 +751,90 @@ def apply_docker_mode(cmd: list[str], config: RunConfig) -> None:
     raise ValueError(f"unknown docker mode: {config.docker_mode}")
 
 
+def prepare_docker_run_environment(
+    config: RunConfig,
+    *,
+    allow_gh_auth_token: bool,
+) -> tuple[RunConfig, dict[str, str]]:
+    docker_env = os.environ.copy()
+    token_envs = github_cli_token_envs_for_run(config.env, docker_env)
+
+    if (
+        not token_envs
+        and allow_gh_auth_token
+        and not has_explicit_env_value(config.env, GITHUB_CLI_TOKEN_ENV_NAMES)
+    ):
+        token = read_github_cli_token()
+        if token:
+            docker_env["GH_TOKEN"] = token
+            token_envs = ("GH_TOKEN",)
+
+    return replace(config, github_token_envs=token_envs), docker_env
+
+
+def github_cli_token_envs_for_run(
+    user_env: Sequence[str],
+    environ: Mapping[str, str],
+) -> tuple[str, ...]:
+    if has_explicit_env_value(user_env, GITHUB_CLI_TOKEN_ENV_NAMES):
+        return ()
+
+    user_env_names = env_names(user_env)
+    return tuple(
+        name
+        for name in GITHUB_CLI_TOKEN_ENV_NAMES
+        if name not in user_env_names and environ.get(name)
+    )
+
+
+def has_explicit_env_value(env: Sequence[str], names: Sequence[str]) -> bool:
+    name_set = set(names)
+    return any("=" in item and item.split("=", 1)[0] in name_set for item in env)
+
+
+def read_github_cli_token() -> str | None:
+    gh_bin = shutil.which("gh")
+    if not gh_bin:
+        return None
+
+    gh_env = os.environ.copy()
+    gh_env.setdefault("GH_PROMPT_DISABLED", "1")
+    try:
+        result = subprocess.run(
+            [gh_bin, "auth", "token"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=gh_env,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    token = result.stdout.strip()
+    return token or None
+
+
 def run_agent(config: RunConfig, *, dry_run: bool) -> int:
     if config.docker_mode == "dind":
         return run_with_sidecar_dind(config, dry_run=dry_run)
 
-    run_cmd = make_run_command(config)
+    run_config, docker_env = prepare_docker_run_environment(
+        config,
+        allow_gh_auth_token=not dry_run,
+    )
+    run_cmd = make_run_command(run_config)
 
     if dry_run:
         print(format_command(run_cmd))
         return 0
 
     try:
-        return subprocess.run(run_cmd).returncode
+        return subprocess.run(run_cmd, env=docker_env).returncode
     except KeyboardInterrupt:
         return 130
 
@@ -764,7 +849,11 @@ def run_with_sidecar_dind(config: RunConfig, *, dry_run: bool) -> int:
     ]
     start_dind_cmd = make_sidecar_dind_command(planned)
     wait_cmd = [planned.docker_bin, "exec", planned.dind_name or "", "docker", "info"]
-    run_cmd = make_run_command(planned)
+    run_config, docker_env = prepare_docker_run_environment(
+        planned,
+        allow_gh_auth_token=not dry_run,
+    )
+    run_cmd = make_run_command(run_config)
     cleanup_cmds = make_sidecar_cleanup_commands(planned)
 
     if dry_run:
@@ -803,7 +892,7 @@ def run_with_sidecar_dind(config: RunConfig, *, dry_run: bool) -> int:
         ):
             return 1
         record_sidecar_use(planned)
-        result = subprocess.run(run_cmd).returncode
+        result = subprocess.run(run_cmd, env=docker_env).returncode
         record_sidecar_use(planned)
         return result
     except KeyboardInterrupt:
@@ -826,6 +915,7 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
         docker_mode=config.docker_mode,
         command=config.command,
         env=config.env,
+        github_token_envs=config.github_token_envs,
         volumes=config.volumes,
         ports=config.ports,
         run_args=config.run_args,

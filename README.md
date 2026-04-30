@@ -136,6 +136,12 @@ non-root user's home:
 Missing host paths are skipped. Disable these mounts with
 `--no-config-mounts`.
 
+For GitHub CLI auth, the launcher forwards host `GH_TOKEN` and `GITHUB_TOKEN`
+into the agent container by environment variable name. If neither variable is
+set on the host but the host `gh` CLI is already logged in, the launcher reads
+`gh auth token` and exposes it to the container as `GH_TOKEN` without placing
+the token value in the Docker command line.
+
 The launcher also sets Docker-side uv storage defaults:
 
 ```text
