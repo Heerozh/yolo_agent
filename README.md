@@ -140,7 +140,10 @@ For GitHub CLI auth, the launcher forwards host `GH_TOKEN` and `GITHUB_TOKEN`
 into the agent container by environment variable name. If neither variable is
 set on the host but the host `gh` CLI is already logged in, the launcher reads
 `gh auth token` and exposes it to the container as `GH_TOKEN` without placing
-the token value in the Docker command line.
+the token value in the Docker command line. When a token is available, the
+container entrypoint also runs `gh auth setup-git --hostname github.com --force`
+as the non-root agent user, so `git push` can use GitHub CLI credentials. Set
+`GH_HOST` in the container to configure a different GitHub host.
 
 The launcher also sets Docker-side uv storage defaults:
 

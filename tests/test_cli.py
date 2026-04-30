@@ -477,6 +477,17 @@ class CliCommandTests(unittest.TestCase):
         self.assertTrue(paths.dockerfile.exists())
         self.assertTrue(paths.context.exists())
 
+    def test_runtime_entrypoint_configures_github_cli_git_credentials(self) -> None:
+        entrypoint = default_runtime_build_paths().context / "agent-entrypoint.sh"
+        script = entrypoint.read_text(encoding="utf-8")
+
+        self.assertIn("configure_github_cli_git", script)
+        self.assertIn("GH_TOKEN", script)
+        self.assertIn("GITHUB_TOKEN", script)
+        self.assertIn("gh auth setup-git", script)
+        self.assertIn("--hostname", script)
+        self.assertIn("--force", script)
+
     def test_daily_cache_bust_uses_yyyymmdd(self) -> None:
         self.assertEqual(daily_cache_bust_value(date(2026, 4, 28)), "20260428")
 

@@ -27,11 +27,36 @@ configure_git_safe_directory() {
   fi
 }
 
+run_as_agent() {
+  if [[ "$(id -u)" == "0" ]]; then
+    gosu "${AGENT_USER}" "$@"
+  else
+    "$@"
+  fi
+}
+
+configure_github_cli_git() {
+  if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+    return
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "agent: warning: GH_TOKEN/GITHUB_TOKEN is set but gh is not installed; git push may require login" >&2
+    return
+  fi
+
+  local host="${GH_HOST:-github.com}"
+  if ! GH_PROMPT_DISABLED=1 run_as_agent gh auth setup-git --hostname "${host}" --force >/dev/null 2>&1; then
+    echo "agent: warning: could not configure gh as git credential helper for ${host}" >&2
+  fi
+}
+
 if [[ "$(id -u)" == "0" ]]; then
   mkdir -p "${AGENT_HOME}"
   chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}" >/dev/null 2>&1 || true
   prepare_writable_dir "${AGENT_UV_DATA_ROOT:-}"
   configure_git_safe_directory
+  configure_github_cli_git
 
   if [[ -S /var/run/docker.sock ]]; then
     socket_gid="$(stat -c '%g' /var/run/docker.sock)"
@@ -46,5 +71,7 @@ if [[ "$(id -u)" == "0" ]]; then
 
   exec gosu "${AGENT_USER}" "$@"
 fi
+
+configure_github_cli_git
 
 exec "$@"
