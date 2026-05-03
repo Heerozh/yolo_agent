@@ -136,6 +136,14 @@ non-root user's home:
 Missing host paths are skipped. Disable these mounts with
 `--no-config-mounts`.
 
+For Git commit identity, the launcher reads the host-side git identity that is
+effective in the current project with `git config --get user.name` and
+`git config --get user.email`. When either value exists, it is passed into the
+container by environment variable name and the entrypoint writes it to the
+non-root agent user's global git config if that value is not already configured
+inside the container. Override this with `-e AGENT_HOST_GIT_USER_NAME=...` or
+`-e AGENT_HOST_GIT_USER_EMAIL=...`.
+
 For GitHub CLI auth, the launcher forwards host `GH_TOKEN` and `GITHUB_TOKEN`
 into the agent container by environment variable name. If neither variable is
 set on the host but the host `gh` CLI is already logged in, the launcher reads

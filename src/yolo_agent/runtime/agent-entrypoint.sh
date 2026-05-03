@@ -35,6 +35,29 @@ run_as_agent() {
   fi
 }
 
+set_git_identity_if_missing() {
+  local key="$1"
+  local value="$2"
+  if [[ -z "${value}" ]]; then
+    return
+  fi
+
+  local current=""
+  current="$(run_as_agent git config --global --get "${key}" 2>/dev/null || true)"
+  if [[ -n "${current}" ]]; then
+    return
+  fi
+
+  if ! run_as_agent git config --global "${key}" "${value}" >/dev/null 2>&1; then
+    echo "agent: warning: could not configure git ${key}" >&2
+  fi
+}
+
+configure_host_git_identity() {
+  set_git_identity_if_missing user.name "${AGENT_HOST_GIT_USER_NAME:-}"
+  set_git_identity_if_missing user.email "${AGENT_HOST_GIT_USER_EMAIL:-}"
+}
+
 configure_github_cli_git() {
   if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
     return
@@ -56,6 +79,7 @@ if [[ "$(id -u)" == "0" ]]; then
   chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}" >/dev/null 2>&1 || true
   prepare_writable_dir "${AGENT_UV_DATA_ROOT:-}"
   configure_git_safe_directory
+  configure_host_git_identity
   configure_github_cli_git
 
   if [[ -S /var/run/docker.sock ]]; then
@@ -72,6 +96,7 @@ if [[ "$(id -u)" == "0" ]]; then
   exec gosu "${AGENT_USER}" "$@"
 fi
 
+configure_host_git_identity
 configure_github_cli_git
 
 exec "$@"

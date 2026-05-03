@@ -14,6 +14,8 @@ from yolo_agent.cli import (
     DEFAULT_UV_CACHE_DIR,
     DEFAULT_UV_DATA_ROOT,
     DEFAULT_UV_DATA_VOLUME,
+    HOST_GIT_USER_EMAIL_ENV,
+    HOST_GIT_USER_NAME_ENV,
     RunConfig,
     claude_settings_path,
     daily_cache_bust_value,
@@ -23,6 +25,7 @@ from yolo_agent.cli import (
     ensure_claude_bypass_permissions,
     existing_config_mounts,
     github_cli_token_envs_for_run,
+    host_git_identity_envs_for_run,
     prepare_docker_run_environment,
     load_sidecar_records,
     make_build_command,
@@ -349,6 +352,75 @@ class CliCommandTests(unittest.TestCase):
             (),
         )
 
+    def test_host_git_identity_envs_for_run_reads_host_git_config(self) -> None:
+        environ: dict[str, str] = {}
+
+        def read_config(key: str, *, cwd: Path) -> str | None:
+            self.assertEqual(cwd, Path("C:/project"))
+            return {
+                "user.name": "Host User",
+                "user.email": "host@example.com",
+            }.get(key)
+
+        with patch("yolo_agent.cli.read_host_git_config_value", side_effect=read_config):
+            envs = host_git_identity_envs_for_run([], environ, cwd=Path("C:/project"))
+
+        self.assertEqual(envs, (HOST_GIT_USER_NAME_ENV, HOST_GIT_USER_EMAIL_ENV))
+        self.assertEqual(environ[HOST_GIT_USER_NAME_ENV], "Host User")
+        self.assertEqual(environ[HOST_GIT_USER_EMAIL_ENV], "host@example.com")
+
+    def test_user_git_identity_env_overrides_matching_host_config_value(self) -> None:
+        environ: dict[str, str] = {}
+
+        with patch("yolo_agent.cli.read_host_git_config_value", return_value="host@example.com"):
+            envs = host_git_identity_envs_for_run(
+                [f"{HOST_GIT_USER_NAME_ENV}=Manual User"],
+                environ,
+                cwd=Path("C:/project"),
+            )
+
+        self.assertEqual(envs, (HOST_GIT_USER_EMAIL_ENV,))
+        self.assertNotIn(HOST_GIT_USER_NAME_ENV, environ)
+        self.assertEqual(environ[HOST_GIT_USER_EMAIL_ENV], "host@example.com")
+
+    def test_prepare_docker_run_environment_passes_host_git_identity_by_name(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+        )
+
+        def read_config(key: str, *, cwd: Path) -> str | None:
+            return {
+                "user.name": "Host User",
+                "user.email": "host@example.com",
+            }.get(key)
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "yolo_agent.cli.read_host_git_config_value",
+            side_effect=read_config,
+        ):
+            run_config, docker_env = prepare_docker_run_environment(
+                config,
+                allow_gh_auth_token=False,
+            )
+
+        command = make_run_command(run_config)
+
+        self.assertEqual(
+            run_config.host_git_identity_envs,
+            (HOST_GIT_USER_NAME_ENV, HOST_GIT_USER_EMAIL_ENV),
+        )
+        self.assertEqual(docker_env[HOST_GIT_USER_NAME_ENV], "Host User")
+        self.assertEqual(docker_env[HOST_GIT_USER_EMAIL_ENV], "host@example.com")
+        self.assertIn(HOST_GIT_USER_NAME_ENV, command)
+        self.assertIn(HOST_GIT_USER_EMAIL_ENV, command)
+        self.assertNotIn(f"{HOST_GIT_USER_NAME_ENV}=Host User", command)
+        self.assertNotIn(f"{HOST_GIT_USER_EMAIL_ENV}=host@example.com", command)
+
     def test_prepare_docker_run_environment_reads_host_gh_token_without_exposing_value(self) -> None:
         config = RunConfig(
             docker_bin="docker",
@@ -487,6 +559,16 @@ class CliCommandTests(unittest.TestCase):
         self.assertIn("gh auth setup-git", script)
         self.assertIn("--hostname", script)
         self.assertIn("--force", script)
+
+    def test_runtime_entrypoint_configures_host_git_identity(self) -> None:
+        entrypoint = default_runtime_build_paths().context / "agent-entrypoint.sh"
+        script = entrypoint.read_text(encoding="utf-8")
+
+        self.assertIn("configure_host_git_identity", script)
+        self.assertIn(HOST_GIT_USER_NAME_ENV, script)
+        self.assertIn(HOST_GIT_USER_EMAIL_ENV, script)
+        self.assertIn("set_git_identity_if_missing user.name", script)
+        self.assertIn("set_git_identity_if_missing user.email", script)
 
     def test_daily_cache_bust_uses_yyyymmdd(self) -> None:
         self.assertEqual(daily_cache_bust_value(date(2026, 4, 28)), "20260428")

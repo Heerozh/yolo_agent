@@ -34,6 +34,8 @@ DEFAULT_UV_DATA_VOLUME = "agent-uv-data"
 DEFAULT_UV_DATA_ROOT = f"{DEFAULT_CONTAINER_HOME}/.local/share/yolo-agent/uv"
 DEFAULT_UV_CACHE_DIR = f"{DEFAULT_UV_DATA_ROOT}/cache"
 GITHUB_CLI_TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
+HOST_GIT_USER_NAME_ENV = "AGENT_HOST_GIT_USER_NAME"
+HOST_GIT_USER_EMAIL_ENV = "AGENT_HOST_GIT_USER_EMAIL"
 TOOL_SHORTCUT_COMMANDS = {
     "claude": ("claude", "--dangerously-skip-permissions"),
     "codex": ("codex", "--dangerously-bypass-approvals-and-sandbox"),
@@ -51,6 +53,7 @@ class RunConfig:
     command: list[str] = field(default_factory=list)
     env: list[str] = field(default_factory=list)
     github_token_envs: tuple[str, ...] = ()
+    host_git_identity_envs: tuple[str, ...] = ()
     volumes: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
     run_args: list[str] = field(default_factory=list)
@@ -567,6 +570,7 @@ def make_run_command(config: RunConfig) -> list[str]:
 
     add_uv_defaults(cmd, config)
     add_github_cli_token_env(cmd, config)
+    add_host_git_identity_env(cmd, config)
     for item in config.env:
         cmd.extend(["--env", item])
     add_config_mounts(cmd, config)
@@ -635,6 +639,13 @@ def add_github_cli_token_env(cmd: list[str], config: RunConfig) -> None:
 
     user_env = env_names(config.env)
     for name in config.github_token_envs:
+        if name not in user_env:
+            cmd.extend(["--env", name])
+
+
+def add_host_git_identity_env(cmd: list[str], config: RunConfig) -> None:
+    user_env = env_names(config.env)
+    for name in config.host_git_identity_envs:
         if name not in user_env:
             cmd.extend(["--env", name])
 
@@ -758,6 +769,11 @@ def prepare_docker_run_environment(
 ) -> tuple[RunConfig, dict[str, str]]:
     docker_env = os.environ.copy()
     token_envs = github_cli_token_envs_for_run(config.env, docker_env)
+    host_git_identity_envs = host_git_identity_envs_for_run(
+        config.env,
+        docker_env,
+        cwd=config.host_cwd,
+    )
 
     if (
         not token_envs
@@ -769,7 +785,14 @@ def prepare_docker_run_environment(
             docker_env["GH_TOKEN"] = token
             token_envs = ("GH_TOKEN",)
 
-    return replace(config, github_token_envs=token_envs), docker_env
+    return (
+        replace(
+            config,
+            github_token_envs=token_envs,
+            host_git_identity_envs=host_git_identity_envs,
+        ),
+        docker_env,
+    )
 
 
 def github_cli_token_envs_for_run(
@@ -790,6 +813,59 @@ def github_cli_token_envs_for_run(
 def has_explicit_env_value(env: Sequence[str], names: Sequence[str]) -> bool:
     name_set = set(names)
     return any("=" in item and item.split("=", 1)[0] in name_set for item in env)
+
+
+def host_git_identity_envs_for_run(
+    user_env: Sequence[str],
+    environ: dict[str, str],
+    *,
+    cwd: Path,
+) -> tuple[str, ...]:
+    user_env_names = env_names(user_env)
+    identity_keys = {
+        HOST_GIT_USER_NAME_ENV: "user.name",
+        HOST_GIT_USER_EMAIL_ENV: "user.email",
+    }
+    envs: list[str] = []
+
+    for env_name, git_key in identity_keys.items():
+        if env_name in user_env_names:
+            continue
+
+        if not environ.get(env_name):
+            value = read_host_git_config_value(git_key, cwd=cwd)
+            if value:
+                environ[env_name] = value
+
+        if environ.get(env_name):
+            envs.append(env_name)
+
+    return tuple(envs)
+
+
+def read_host_git_config_value(key: str, *, cwd: Path) -> str | None:
+    git_bin = shutil.which("git")
+    if not git_bin:
+        return None
+
+    try:
+        result = subprocess.run(
+            [git_bin, "config", "--get", key],
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    value = result.stdout.strip()
+    return value or None
 
 
 def read_github_cli_token() -> str | None:
@@ -916,6 +992,7 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
         command=config.command,
         env=config.env,
         github_token_envs=config.github_token_envs,
+        host_git_identity_envs=config.host_git_identity_envs,
         volumes=config.volumes,
         ports=config.ports,
         run_args=config.run_args,
