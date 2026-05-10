@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     inotify-tools \
     iputils-ping \
     jq \
+    libxml2-utils \
     moreutils \
     netcat-openbsd \
     openssh-client \
