@@ -106,6 +106,13 @@ where the user ran `agent`. For example, running from `C:\path\to\some-project`
 mounts that folder at `/workspace-some-project`. Override it with
 `--workspace` when a fixed path is needed.
 
+On startup, `agent` also scans up to five directory levels under the current
+workspace for Windows directory symlinks and junctions. Each discovered link is
+resolved on the host and mounted again into the agent container at the same
+relative path below the workspace, so linked directories appear as usable
+directories inside the container. These extra mounts are added only to the
+agent container; the DinD sidecar keeps just the top-level workspace mount.
+
 The agent container runs commands as the non-root `agent` user. A root
 entrypoint performs startup setup, fixes Docker socket group access, then drops
 to that user. This is required for tools such as `claude

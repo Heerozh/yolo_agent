@@ -19,6 +19,7 @@ from yolo_agent.cli import (
     RunConfig,
     claude_settings_path,
     daily_cache_bust_value,
+    discover_workspace_link_mounts,
     default_workspace_path,
     default_runtime_build_paths,
     default_uv_project_environment,
@@ -42,6 +43,7 @@ from yolo_agent.cli import (
     save_sidecar_records,
     should_cleanup_dind_after_run,
     stale_sidecar_records,
+    workspace_child_path,
     with_sidecar_names,
 )
 
@@ -82,6 +84,24 @@ class CliCommandTests(unittest.TestCase):
             f"type=bind,source={Path('C:/project').resolve()},target=/workspace",
         )
 
+    def test_agent_container_mounts_discovered_workspace_links(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            workspace_link_mounts=((Path("D:/shared/vendor").resolve(), "/workspace/vendor"),),
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn(
+            f"type=bind,source={Path('D:/shared/vendor').resolve()},target=/workspace/vendor",
+            command,
+        )
+
     def test_sidecar_dind_command_starts_privileged_daemon(self) -> None:
         config = RunConfig(
             docker_bin="docker",
@@ -106,6 +126,26 @@ class CliCommandTests(unittest.TestCase):
         self.assertNotIn("--rm", command)
         self.assertIn("yolo-agent.role=dind", command)
         self.assertIn("yolo-agent.run-volume=agent-dind-run-test", command)
+
+    def test_sidecar_dind_does_not_mount_discovered_workspace_links(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+            dind_image="docker:dind",
+            dind_name="agent-dind-test",
+            dind_run_volume="agent-dind-run-test",
+            workspace_link_mounts=((Path("D:/shared/vendor").resolve(), "/workspace/vendor"),),
+        )
+
+        command = make_sidecar_dind_command(config)
+
+        self.assertNotIn(
+            f"type=bind,source={Path('D:/shared/vendor').resolve()},target=/workspace/vendor",
+            command,
+        )
 
     def test_non_reused_sidecar_dind_is_removed_after_run(self) -> None:
         config = RunConfig(
@@ -142,11 +182,118 @@ class CliCommandTests(unittest.TestCase):
         self.assertTrue(first.dind_name.startswith("agent-dind-project-"))
         self.assertTrue(first.dind_run_volume.startswith("agent-dind-run-project-"))
 
+    def test_sidecar_planning_preserves_discovered_workspace_links(self) -> None:
+        workspace_link_mounts = ((Path("D:/shared/vendor").resolve(), "/workspace/vendor"),)
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="dind",
+            workspace_link_mounts=workspace_link_mounts,
+        )
+
+        planned = with_sidecar_names(config)
+
+        self.assertEqual(planned.workspace_link_mounts, workspace_link_mounts)
+
     def test_default_workspace_path_uses_current_directory_name(self) -> None:
         self.assertEqual(default_workspace_path(Path("C:/xsoft/hetu")), "/workspace-hetu")
 
     def test_project_slug_is_safe_for_container_path(self) -> None:
         self.assertEqual(project_slug("My Project!"), "My-Project")
+
+    def test_workspace_child_path_uses_posix_separators(self) -> None:
+        self.assertEqual(
+            workspace_child_path("/workspace-project", Path("vendor") / "nested"),
+            "/workspace-project/vendor/nested",
+        )
+
+    def test_discover_workspace_link_mounts_scans_up_to_depth_five(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_root = Path(temp_dir).resolve()
+            shallow_link = workspace_root / "level1" / "level2" / "level3" / "level4" / "link"
+            deep_link = (
+                workspace_root
+                / "deep1"
+                / "deep2"
+                / "deep3"
+                / "deep4"
+                / "deep5"
+                / "link"
+            )
+            shallow_link.mkdir(parents=True)
+            deep_link.mkdir(parents=True)
+            shallow_target = workspace_root / "targets" / "shallow"
+            deep_target = workspace_root / "targets" / "deep"
+            shallow_target.mkdir(parents=True)
+            deep_target.mkdir(parents=True)
+
+            link_targets = {
+                shallow_link: shallow_target,
+                deep_link: deep_target,
+            }
+
+            def fake_is_directory_link(path: Path) -> bool:
+                return path in link_targets
+
+            def fake_resolve_directory_link_target(path: Path) -> Path | None:
+                return link_targets.get(path)
+
+            with patch(
+                "yolo_agent.cli.is_directory_link",
+                side_effect=fake_is_directory_link,
+            ), patch(
+                "yolo_agent.cli.resolve_directory_link_target",
+                side_effect=fake_resolve_directory_link_target,
+            ):
+                mounts = discover_workspace_link_mounts(workspace_root, "/workspace")
+
+        self.assertEqual(mounts, [(shallow_target, "/workspace/level1/level2/level3/level4/link")])
+
+    def test_discover_workspace_link_mounts_descends_into_link_directories_without_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace_root = Path(temp_dir).resolve()
+            outer_link = workspace_root / "outer"
+            nested_link = outer_link / "nested"
+            cycle_link = outer_link / "cycle"
+            outer_link.mkdir()
+            nested_link.mkdir()
+            cycle_link.mkdir()
+            outer_target = workspace_root / "targets" / "outer"
+            nested_target = workspace_root / "targets" / "nested"
+            outer_target.mkdir(parents=True)
+            nested_target.mkdir()
+
+            link_targets = {
+                outer_link: outer_target,
+                nested_link: nested_target,
+                cycle_link: workspace_root,
+            }
+
+            def fake_is_directory_link(path: Path) -> bool:
+                return path in link_targets
+
+            def fake_resolve_directory_link_target(path: Path) -> Path | None:
+                return link_targets.get(path)
+
+            with patch(
+                "yolo_agent.cli.is_directory_link",
+                side_effect=fake_is_directory_link,
+            ), patch(
+                "yolo_agent.cli.resolve_directory_link_target",
+                side_effect=fake_resolve_directory_link_target,
+            ):
+                mounts = discover_workspace_link_mounts(workspace_root, "/workspace")
+
+        self.assertEqual(
+            mounts,
+            [
+                (outer_target, "/workspace/outer"),
+                (workspace_root, "/workspace/outer/cycle"),
+                (nested_target, "/workspace/outer/nested"),
+            ],
+        )
 
     def test_sidecar_name_changes_when_container_workspace_changes(self) -> None:
         base = RunConfig(

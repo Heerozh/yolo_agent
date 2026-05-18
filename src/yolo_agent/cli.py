@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import shlex
 import shutil
 import subprocess
@@ -12,13 +13,14 @@ import sys
 import time
 from dataclasses import dataclass, field, replace
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
 
 DEFAULT_IMAGE = "yolo-agent:latest"
 DEFAULT_DOCKERFILE = "Dockerfile"
 DEFAULT_WORKSPACE_TEMPLATE = "/workspace-{project}"
+DEFAULT_WORKSPACE_LINK_SCAN_DEPTH = 5
 DEFAULT_DIND_IMAGE = "docker:dind"
 DEFAULT_DIND_IDLE_TIMEOUT = "1h"
 DEFAULT_CONTAINER_HOME = "/home/agent"
@@ -41,6 +43,8 @@ TOOL_SHORTCUT_COMMANDS = {
     "codex": ("codex", "--dangerously-bypass-approvals-and-sandbox"),
 }
 FALSE_VALUES = {"0", "false", "no", "off"}
+WINDOWS_REPARSE_TAG_SYMLINK = getattr(stat, "IO_REPARSE_TAG_SYMLINK", 0xA000000C)
+WINDOWS_REPARSE_TAG_MOUNT_POINT = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,7 @@ class RunConfig:
     env: list[str] = field(default_factory=list)
     github_token_envs: tuple[str, ...] = ()
     host_git_identity_envs: tuple[str, ...] = ()
+    workspace_link_mounts: tuple[tuple[Path, str], ...] = ()
     volumes: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
     run_args: list[str] = field(default_factory=list)
@@ -414,6 +419,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.no_run:
         return 0
 
+    config = replace(
+        config,
+        workspace_link_mounts=tuple(discover_workspace_link_mounts(host_cwd, workspace)),
+    )
+
     if not args.dry_run:
         prepare_host_config(config)
 
@@ -540,6 +550,81 @@ def daily_cache_bust_value(today: date | None = None) -> str:
     return (today or date.today()).strftime("%Y%m%d")
 
 
+def discover_workspace_link_mounts(
+    host_cwd: Path,
+    workspace: str,
+    *,
+    max_depth: int = DEFAULT_WORKSPACE_LINK_SCAN_DEPTH,
+) -> list[tuple[Path, str]]:
+    if max_depth <= 0:
+        return []
+
+    mounts: list[tuple[Path, str]] = []
+
+    def visit(directory: Path, depth: int, ancestors: tuple[Path, ...]) -> None:
+        try:
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name.casefold())
+        except OSError:
+            return
+
+        for entry in entries:
+            path = Path(entry.path)
+            entry_depth = depth + 1
+
+            if is_directory_link(path):
+                target = resolve_directory_link_target(path)
+                if target is not None:
+                    relative = path.relative_to(host_cwd)
+                    container_target = workspace_child_path(workspace, relative)
+                    mounts.append((target, container_target))
+                    if entry_depth < max_depth and target not in ancestors:
+                        visit(path, entry_depth, (*ancestors, target))
+                continue
+
+            if entry_depth >= max_depth:
+                continue
+
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    visit(path, entry_depth, (*ancestors, path.resolve(strict=True)))
+            except OSError:
+                continue
+
+    visit(host_cwd, 0, (host_cwd.resolve(),))
+    return mounts
+
+
+def is_directory_link(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+
+    if os.name == "nt":
+        reparse_tag = getattr(metadata, "st_reparse_tag", None)
+        if reparse_tag not in {
+            WINDOWS_REPARSE_TAG_SYMLINK,
+            WINDOWS_REPARSE_TAG_MOUNT_POINT,
+        }:
+            return False
+        return path.is_dir()
+
+    return path.is_symlink() and path.is_dir()
+
+
+def resolve_directory_link_target(path: Path) -> Path | None:
+    try:
+        target = path.resolve(strict=True)
+    except OSError:
+        return None
+    return target if target.is_dir() else None
+
+
+def workspace_child_path(workspace: str, relative_path: Path) -> str:
+    return PurePosixPath(workspace).joinpath(*relative_path.parts).as_posix()
+
+
 def make_run_command(config: RunConfig) -> list[str]:
     cmd = [config.docker_bin, "run"]
 
@@ -558,6 +643,7 @@ def make_run_command(config: RunConfig) -> list[str]:
         cmd.extend(["--pull", config.pull])
 
     add_workspace_mount(cmd, config.host_cwd, config.workspace)
+    add_workspace_link_mounts(cmd, config.workspace_link_mounts)
     cmd.extend(["--workdir", config.workspace])
     cmd.extend(["--env", f"AGENT_HOST_CWD={config.host_cwd}"])
     cmd.extend(["--env", f"AGENT_WORKSPACE={config.workspace}"])
@@ -603,6 +689,14 @@ def add_workspace_mount(cmd: list[str], host_cwd: Path, workspace: str) -> None:
             f"type=bind,source={host_cwd},target={workspace}",
         ]
     )
+
+
+def add_workspace_link_mounts(
+    cmd: list[str],
+    mounts: Sequence[tuple[Path, str]],
+) -> None:
+    for source, target in mounts:
+        cmd.extend(["--mount", f"type=bind,source={source},target={target}"])
 
 
 def add_config_mounts(cmd: list[str], config: RunConfig) -> None:
@@ -993,6 +1087,7 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
         env=config.env,
         github_token_envs=config.github_token_envs,
         host_git_identity_envs=config.host_git_identity_envs,
+        workspace_link_mounts=config.workspace_link_mounts,
         volumes=config.volumes,
         ports=config.ports,
         run_args=config.run_args,
