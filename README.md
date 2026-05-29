@@ -29,7 +29,7 @@ environment.
 For a more global Windows install, use `pipx`:
 
 ```powershell
-uvx pipx install . --force
+uv tool install . --force
 ```
 
 ## Build the runtime image
@@ -98,6 +98,7 @@ docker run --rm -it `
   --network container:agent-dind-... `
   --env AGENT_DOCKER_MODE=dind `
   --env DOCKER_HOST=unix:///var/run/docker.sock `
+  --env TZ=Asia/Singapore `
   yolo-agent:latest
 ```
 
@@ -105,6 +106,12 @@ Inside the container, the default work directory is based on the folder name
 where the user ran `agent`. For example, running from `C:\path\to\some-project`
 mounts that folder at `/workspace-some-project`. Override it with
 `--workspace` when a fixed path is needed.
+
+The launcher also syncs the agent container's timezone with the host by passing
+`TZ` to Docker. On Windows it converts the Windows timezone ID, such as
+`Singapore Standard Time`, into the Linux/IANA name expected by the container,
+such as `Asia/Singapore`. Pass `--env TZ=UTC` or another explicit value to
+override the detected host timezone.
 
 On startup, `agent` also scans up to five directory levels under the current
 workspace for Windows directory symlinks and junctions. Each discovered link is

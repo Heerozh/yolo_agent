@@ -27,6 +27,7 @@ from yolo_agent.cli import (
     existing_config_mounts,
     github_cli_token_envs_for_run,
     host_git_identity_envs_for_run,
+    host_timezone_for_run,
     prepare_docker_run_environment,
     load_sidecar_records,
     make_build_command,
@@ -43,6 +44,7 @@ from yolo_agent.cli import (
     save_sidecar_records,
     should_cleanup_dind_after_run,
     stale_sidecar_records,
+    windows_timezone_to_iana,
     workspace_child_path,
     with_sidecar_names,
 )
@@ -485,6 +487,38 @@ class CliCommandTests(unittest.TestCase):
         self.assertNotIn("GH_TOKEN", command)
         self.assertNotIn("GITHUB_TOKEN", command)
 
+    def test_host_timezone_is_added_to_agent_container(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            host_timezone="Asia/Singapore",
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn("TZ=Asia/Singapore", command)
+
+    def test_user_timezone_env_overrides_host_timezone(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            env=["TZ=UTC"],
+            host_timezone="Asia/Singapore",
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn("TZ=UTC", command)
+        self.assertNotIn("TZ=Asia/Singapore", command)
+
     def test_github_cli_token_envs_for_run_uses_host_environment(self) -> None:
         self.assertEqual(
             github_cli_token_envs_for_run([], {"GH_TOKEN": "secret", "GITHUB_TOKEN": "secret2"}),
@@ -530,6 +564,37 @@ class CliCommandTests(unittest.TestCase):
         self.assertNotIn(HOST_GIT_USER_NAME_ENV, environ)
         self.assertEqual(environ[HOST_GIT_USER_EMAIL_ENV], "host@example.com")
 
+    def test_host_timezone_for_run_uses_host_tz_environment(self) -> None:
+        with patch("yolo_agent.cli.os.name", "posix"):
+            self.assertEqual(host_timezone_for_run([], {"TZ": "Asia/Singapore"}), "Asia/Singapore")
+
+    def test_user_timezone_env_skips_host_timezone_detection(self) -> None:
+        self.assertIsNone(host_timezone_for_run(["TZ=UTC"], {"TZ": "Asia/Singapore"}))
+
+    def test_windows_timezone_detection_wins_over_host_tz_environment(self) -> None:
+        with patch("yolo_agent.cli.os.name", "nt"), patch(
+            "yolo_agent.cli.read_windows_iana_timezone",
+            return_value="Asia/Singapore",
+        ):
+            timezone = host_timezone_for_run([], {"TZ": "UTC"})
+
+        self.assertEqual(timezone, "Asia/Singapore")
+
+    def test_host_timezone_for_run_maps_windows_timezone(self) -> None:
+        with patch("yolo_agent.cli.os.name", "nt"), patch(
+            "yolo_agent.cli.read_windows_iana_timezone",
+            return_value=None,
+        ), patch(
+            "yolo_agent.cli.read_windows_timezone_id",
+            return_value="Singapore Standard Time",
+        ):
+            timezone = host_timezone_for_run([], {})
+
+        self.assertEqual(timezone, "Asia/Singapore")
+
+    def test_windows_timezone_to_iana_has_singapore_fallback(self) -> None:
+        self.assertEqual(windows_timezone_to_iana("Singapore Standard Time"), "Asia/Singapore")
+
     def test_prepare_docker_run_environment_passes_host_git_identity_by_name(self) -> None:
         config = RunConfig(
             docker_bin="docker",
@@ -549,6 +614,9 @@ class CliCommandTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True), patch(
             "yolo_agent.cli.read_host_git_config_value",
             side_effect=read_config,
+        ), patch(
+            "yolo_agent.cli.host_timezone_for_run",
+            return_value=None,
         ):
             run_config, docker_env = prepare_docker_run_environment(
                 config,
@@ -568,6 +636,33 @@ class CliCommandTests(unittest.TestCase):
         self.assertNotIn(f"{HOST_GIT_USER_NAME_ENV}=Host User", command)
         self.assertNotIn(f"{HOST_GIT_USER_EMAIL_ENV}=host@example.com", command)
 
+    def test_prepare_docker_run_environment_passes_host_timezone(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+        )
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "yolo_agent.cli.read_host_git_config_value",
+            return_value=None,
+        ), patch(
+            "yolo_agent.cli.host_timezone_for_run",
+            return_value="Asia/Singapore",
+        ):
+            run_config, _docker_env = prepare_docker_run_environment(
+                config,
+                allow_gh_auth_token=False,
+            )
+
+        command = make_run_command(run_config)
+
+        self.assertEqual(run_config.host_timezone, "Asia/Singapore")
+        self.assertIn("TZ=Asia/Singapore", command)
+
     def test_prepare_docker_run_environment_reads_host_gh_token_without_exposing_value(self) -> None:
         config = RunConfig(
             docker_bin="docker",
@@ -581,6 +676,9 @@ class CliCommandTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True), patch(
             "yolo_agent.cli.read_github_cli_token",
             return_value="cli-token",
+        ), patch(
+            "yolo_agent.cli.host_timezone_for_run",
+            return_value=None,
         ):
             run_config, docker_env = prepare_docker_run_environment(config, allow_gh_auth_token=True)
 

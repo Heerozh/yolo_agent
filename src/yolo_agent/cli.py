@@ -38,6 +38,7 @@ DEFAULT_UV_CACHE_DIR = f"{DEFAULT_UV_DATA_ROOT}/cache"
 GITHUB_CLI_TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
 HOST_GIT_USER_NAME_ENV = "AGENT_HOST_GIT_USER_NAME"
 HOST_GIT_USER_EMAIL_ENV = "AGENT_HOST_GIT_USER_EMAIL"
+TIMEZONE_ENV = "TZ"
 TOOL_SHORTCUT_COMMANDS = {
     "claude": ("claude", "--dangerously-skip-permissions"),
     "codex": ("codex", "--dangerously-bypass-approvals-and-sandbox"),
@@ -45,6 +46,147 @@ TOOL_SHORTCUT_COMMANDS = {
 FALSE_VALUES = {"0", "false", "no", "off"}
 WINDOWS_REPARSE_TAG_SYMLINK = getattr(stat, "IO_REPARSE_TAG_SYMLINK", 0xA000000C)
 WINDOWS_REPARSE_TAG_MOUNT_POINT = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+WINDOWS_TIMEZONE_IANA_FALLBACKS = {
+    "Dateline Standard Time": "Etc/GMT+12",
+    "UTC-11": "Etc/GMT+11",
+    "Hawaiian Standard Time": "Pacific/Honolulu",
+    "Aleutian Standard Time": "America/Adak",
+    "Marquesas Standard Time": "Pacific/Marquesas",
+    "UTC-09": "Etc/GMT+9",
+    "Alaskan Standard Time": "America/Anchorage",
+    "Pacific Standard Time (Mexico)": "America/Tijuana",
+    "UTC-08": "Etc/GMT+8",
+    "Pacific Standard Time": "America/Los_Angeles",
+    "US Mountain Standard Time": "America/Phoenix",
+    "Mountain Standard Time": "America/Denver",
+    "Mountain Standard Time (Mexico)": "America/Chihuahua",
+    "Yukon Standard Time": "America/Whitehorse",
+    "Central America Standard Time": "America/Guatemala",
+    "Central Standard Time": "America/Chicago",
+    "Easter Island Standard Time": "Pacific/Easter",
+    "Central Standard Time (Mexico)": "America/Mexico_City",
+    "Canada Central Standard Time": "America/Regina",
+    "Eastern Standard Time": "America/New_York",
+    "Eastern Standard Time (Mexico)": "America/Cancun",
+    "US Eastern Standard Time": "America/Indianapolis",
+    "Cuba Standard Time": "America/Havana",
+    "SA Pacific Standard Time": "America/Bogota",
+    "Haiti Standard Time": "America/Port-au-Prince",
+    "Turks And Caicos Standard Time": "America/Grand_Turk",
+    "SA Western Standard Time": "America/La_Paz",
+    "Venezuela Standard Time": "America/Caracas",
+    "Pacific SA Standard Time": "America/Santiago",
+    "Atlantic Standard Time": "America/Halifax",
+    "Central Brazilian Standard Time": "America/Cuiaba",
+    "Newfoundland Standard Time": "America/St_Johns",
+    "Paraguay Standard Time": "America/Asuncion",
+    "SA Eastern Standard Time": "America/Cayenne",
+    "Saint Pierre Standard Time": "America/Miquelon",
+    "E. South America Standard Time": "America/Sao_Paulo",
+    "Argentina Standard Time": "America/Buenos_Aires",
+    "Bahia Standard Time": "America/Bahia",
+    "Montevideo Standard Time": "America/Montevideo",
+    "Magallanes Standard Time": "America/Punta_Arenas",
+    "Tocantins Standard Time": "America/Araguaina",
+    "UTC-02": "Etc/GMT+2",
+    "Greenland Standard Time": "America/Godthab",
+    "Azores Standard Time": "Atlantic/Azores",
+    "Cape Verde Standard Time": "Atlantic/Cape_Verde",
+    "UTC": "Etc/UTC",
+    "Sao Tome Standard Time": "Africa/Sao_Tome",
+    "Greenwich Standard Time": "Atlantic/Reykjavik",
+    "GMT Standard Time": "Europe/London",
+    "Morocco Standard Time": "Africa/Casablanca",
+    "W. Central Africa Standard Time": "Africa/Lagos",
+    "Romance Standard Time": "Europe/Paris",
+    "Central European Standard Time": "Europe/Warsaw",
+    "Central Europe Standard Time": "Europe/Budapest",
+    "W. Europe Standard Time": "Europe/Berlin",
+    "West Bank Standard Time": "Asia/Hebron",
+    "Kaliningrad Standard Time": "Europe/Kaliningrad",
+    "South Africa Standard Time": "Africa/Johannesburg",
+    "Sudan Standard Time": "Africa/Khartoum",
+    "E. Europe Standard Time": "Europe/Chisinau",
+    "Egypt Standard Time": "Africa/Cairo",
+    "South Sudan Standard Time": "Africa/Juba",
+    "Namibia Standard Time": "Africa/Windhoek",
+    "Libya Standard Time": "Africa/Tripoli",
+    "Israel Standard Time": "Asia/Jerusalem",
+    "Middle East Standard Time": "Asia/Beirut",
+    "FLE Standard Time": "Europe/Kiev",
+    "GTB Standard Time": "Europe/Bucharest",
+    "Turkey Standard Time": "Europe/Istanbul",
+    "Volgograd Standard Time": "Europe/Volgograd",
+    "E. Africa Standard Time": "Africa/Nairobi",
+    "Syria Standard Time": "Asia/Damascus",
+    "Jordan Standard Time": "Asia/Amman",
+    "Arabic Standard Time": "Asia/Baghdad",
+    "Belarus Standard Time": "Europe/Minsk",
+    "Arab Standard Time": "Asia/Riyadh",
+    "Russian Standard Time": "Europe/Moscow",
+    "Iran Standard Time": "Asia/Tehran",
+    "Russia Time Zone 3": "Europe/Samara",
+    "Caucasus Standard Time": "Asia/Yerevan",
+    "Azerbaijan Standard Time": "Asia/Baku",
+    "Georgian Standard Time": "Asia/Tbilisi",
+    "Saratov Standard Time": "Europe/Saratov",
+    "Mauritius Standard Time": "Indian/Mauritius",
+    "Arabian Standard Time": "Asia/Dubai",
+    "Astrakhan Standard Time": "Europe/Astrakhan",
+    "Afghanistan Standard Time": "Asia/Kabul",
+    "Pakistan Standard Time": "Asia/Karachi",
+    "Ekaterinburg Standard Time": "Asia/Yekaterinburg",
+    "West Asia Standard Time": "Asia/Tashkent",
+    "Qyzylorda Standard Time": "Asia/Qyzylorda",
+    "Sri Lanka Standard Time": "Asia/Colombo",
+    "India Standard Time": "Asia/Calcutta",
+    "Nepal Standard Time": "Asia/Katmandu",
+    "Central Asia Standard Time": "Asia/Almaty",
+    "Bangladesh Standard Time": "Asia/Dhaka",
+    "Omsk Standard Time": "Asia/Omsk",
+    "Myanmar Standard Time": "Asia/Rangoon",
+    "North Asia Standard Time": "Asia/Krasnoyarsk",
+    "Altai Standard Time": "Asia/Barnaul",
+    "Tomsk Standard Time": "Asia/Tomsk",
+    "N. Central Asia Standard Time": "Asia/Novosibirsk",
+    "SE Asia Standard Time": "Asia/Bangkok",
+    "W. Mongolia Standard Time": "Asia/Hovd",
+    "Ulaanbaatar Standard Time": "Asia/Ulaanbaatar",
+    "North Asia East Standard Time": "Asia/Irkutsk",
+    "China Standard Time": "Asia/Shanghai",
+    "Taipei Standard Time": "Asia/Taipei",
+    "Singapore Standard Time": "Asia/Singapore",
+    "W. Australia Standard Time": "Australia/Perth",
+    "Aus Central W. Standard Time": "Australia/Eucla",
+    "Tokyo Standard Time": "Asia/Tokyo",
+    "North Korea Standard Time": "Asia/Pyongyang",
+    "Transbaikal Standard Time": "Asia/Chita",
+    "Yakutsk Standard Time": "Asia/Yakutsk",
+    "Korea Standard Time": "Asia/Seoul",
+    "AUS Central Standard Time": "Australia/Darwin",
+    "Cen. Australia Standard Time": "Australia/Adelaide",
+    "West Pacific Standard Time": "Pacific/Port_Moresby",
+    "AUS Eastern Standard Time": "Australia/Sydney",
+    "E. Australia Standard Time": "Australia/Brisbane",
+    "Vladivostok Standard Time": "Asia/Vladivostok",
+    "Tasmania Standard Time": "Australia/Hobart",
+    "Lord Howe Standard Time": "Australia/Lord_Howe",
+    "Russia Time Zone 10": "Asia/Srednekolymsk",
+    "Bougainville Standard Time": "Pacific/Bougainville",
+    "Central Pacific Standard Time": "Pacific/Guadalcanal",
+    "Sakhalin Standard Time": "Asia/Sakhalin",
+    "Norfolk Standard Time": "Pacific/Norfolk",
+    "Magadan Standard Time": "Asia/Magadan",
+    "UTC+12": "Etc/GMT-12",
+    "New Zealand Standard Time": "Pacific/Auckland",
+    "Fiji Standard Time": "Pacific/Fiji",
+    "Russia Time Zone 11": "Asia/Kamchatka",
+    "Chatham Islands Standard Time": "Pacific/Chatham",
+    "Tonga Standard Time": "Pacific/Tongatapu",
+    "UTC+13": "Etc/GMT-13",
+    "Samoa Standard Time": "Pacific/Apia",
+    "Line Islands Standard Time": "Pacific/Kiritimati",
+}
 
 
 @dataclass(frozen=True)
@@ -58,6 +200,7 @@ class RunConfig:
     env: list[str] = field(default_factory=list)
     github_token_envs: tuple[str, ...] = ()
     host_git_identity_envs: tuple[str, ...] = ()
+    host_timezone: str | None = None
     workspace_link_mounts: tuple[tuple[Path, str], ...] = ()
     volumes: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
@@ -657,6 +800,7 @@ def make_run_command(config: RunConfig) -> list[str]:
     add_uv_defaults(cmd, config)
     add_github_cli_token_env(cmd, config)
     add_host_git_identity_env(cmd, config)
+    add_host_timezone_env(cmd, config)
     for item in config.env:
         cmd.extend(["--env", item])
     add_config_mounts(cmd, config)
@@ -742,6 +886,16 @@ def add_host_git_identity_env(cmd: list[str], config: RunConfig) -> None:
     for name in config.host_git_identity_envs:
         if name not in user_env:
             cmd.extend(["--env", name])
+
+
+def add_host_timezone_env(cmd: list[str], config: RunConfig) -> None:
+    if not config.host_timezone:
+        return
+
+    if TIMEZONE_ENV in env_names(config.env):
+        return
+
+    cmd.extend(["--env", f"{TIMEZONE_ENV}={config.host_timezone}"])
 
 
 def env_names(env: Sequence[str]) -> set[str]:
@@ -868,6 +1022,7 @@ def prepare_docker_run_environment(
         docker_env,
         cwd=config.host_cwd,
     )
+    host_timezone = config.host_timezone or host_timezone_for_run(config.env, docker_env)
 
     if (
         not token_envs
@@ -884,9 +1039,121 @@ def prepare_docker_run_environment(
             config,
             github_token_envs=token_envs,
             host_git_identity_envs=host_git_identity_envs,
+            host_timezone=host_timezone,
         ),
         docker_env,
     )
+
+
+def host_timezone_for_run(
+    user_env: Sequence[str],
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    if TIMEZONE_ENV in env_names(user_env):
+        return None
+
+    if os.name == "nt":
+        windows_timezone = read_windows_iana_timezone() or windows_timezone_to_iana(
+            read_windows_timezone_id()
+        )
+        if windows_timezone:
+            return windows_timezone
+
+    host_env = os.environ if environ is None else environ
+    env_timezone = host_env.get(TIMEZONE_ENV, "").strip()
+    if env_timezone:
+        return env_timezone
+
+    return read_unix_timezone()
+
+
+def read_windows_iana_timezone() -> str | None:
+    powershell_bin = shutil.which("pwsh") or shutil.which("powershell")
+    if not powershell_bin:
+        return None
+
+    script = (
+        "$iana = $null; "
+        "if ([System.TimeZoneInfo]::TryConvertWindowsIdToIanaId("
+        "[System.TimeZoneInfo]::Local.Id, [ref]$iana)) { $iana }"
+    )
+    try:
+        result = subprocess.run(
+            [powershell_bin, "-NoProfile", "-Command", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    timezone = result.stdout.strip()
+    return timezone or None
+
+
+def read_windows_timezone_id() -> str | None:
+    tzutil_bin = shutil.which("tzutil")
+    if not tzutil_bin:
+        return None
+
+    try:
+        result = subprocess.run(
+            [tzutil_bin, "/g"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    timezone_id = result.stdout.strip()
+    return timezone_id or None
+
+
+def windows_timezone_to_iana(windows_timezone_id: str | None) -> str | None:
+    if not windows_timezone_id:
+        return None
+
+    return WINDOWS_TIMEZONE_IANA_FALLBACKS.get(windows_timezone_id)
+
+
+def read_unix_timezone() -> str | None:
+    timezone_file = Path("/etc/timezone")
+    try:
+        timezone = timezone_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        timezone = ""
+
+    if timezone:
+        return timezone.splitlines()[0]
+
+    localtime = Path("/etc/localtime")
+    try:
+        resolved = localtime.resolve(strict=True)
+    except OSError:
+        return None
+
+    parts = resolved.parts
+    try:
+        zoneinfo_index = parts.index("zoneinfo")
+    except ValueError:
+        return None
+
+    timezone_parts = parts[zoneinfo_index + 1 :]
+    if not timezone_parts:
+        return None
+
+    return PurePosixPath(*timezone_parts).as_posix()
 
 
 def github_cli_token_envs_for_run(
@@ -1087,6 +1354,7 @@ def with_sidecar_names(config: RunConfig) -> RunConfig:
         env=config.env,
         github_token_envs=config.github_token_envs,
         host_git_identity_envs=config.host_git_identity_envs,
+        host_timezone=config.host_timezone,
         workspace_link_mounts=config.workspace_link_mounts,
         volumes=config.volumes,
         ports=config.ports,
