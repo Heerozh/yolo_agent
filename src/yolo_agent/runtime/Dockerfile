@@ -92,7 +92,7 @@ RUN groupadd --gid 1000 agent \
 ARG AGENT_CACHE_BUST=1
 RUN echo "${AGENT_CACHE_BUST}" > /tmp/agent-cache-bust
 RUN npm i -g @openai/codex
-RUN npm install -g @google/gemini-cli
+# RUN npm install -g @google/gemini-cli
 
 USER agent
 RUN curl -fsSL https://claude.ai/install.sh | bash
