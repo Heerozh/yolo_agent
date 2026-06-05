@@ -813,6 +813,13 @@ class CliCommandTests(unittest.TestCase):
         self.assertTrue(paths.dockerfile.exists())
         self.assertTrue(paths.context.exists())
 
+    def test_runtime_dockerfile_normalizes_entrypoint_line_endings(self) -> None:
+        dockerfile = default_runtime_build_paths().dockerfile
+        contents = dockerfile.read_text(encoding="utf-8")
+
+        self.assertIn("sed -i 's/\\r$//'", contents)
+        self.assertIn("chmod +x /usr/local/bin/agent-entrypoint", contents)
+
     def test_runtime_entrypoint_configures_github_cli_git_credentials(self) -> None:
         entrypoint = default_runtime_build_paths().context / "agent-entrypoint.sh"
         script = entrypoint.read_text(encoding="utf-8")

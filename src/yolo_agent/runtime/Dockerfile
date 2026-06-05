@@ -101,7 +101,8 @@ RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 USER root
 
 COPY agent-entrypoint.sh /usr/local/bin/agent-entrypoint
-RUN chmod +x /usr/local/bin/agent-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/agent-entrypoint \
+    && chmod +x /usr/local/bin/agent-entrypoint
 
 ENV HOME=/home/agent
 ENV PATH=/home/agent/.local/bin:${PATH}
