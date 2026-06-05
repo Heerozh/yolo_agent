@@ -14,6 +14,7 @@ from yolo_agent.cli import (
     DEFAULT_UV_CACHE_DIR,
     DEFAULT_UV_DATA_ROOT,
     DEFAULT_UV_DATA_VOLUME,
+    GIT_SAFE_DIRECTORIES_ENV,
     HOST_GIT_USER_EMAIL_ENV,
     HOST_GIT_USER_NAME_ENV,
     RunConfig,
@@ -103,6 +104,24 @@ class CliCommandTests(unittest.TestCase):
             f"type=bind,source={Path('D:/shared/vendor').resolve()},target=/workspace/vendor",
             command,
         )
+        self.assertIn(f"{GIT_SAFE_DIRECTORIES_ENV}=/workspace/vendor", command)
+
+    def test_user_git_safe_directories_env_is_not_overwritten(self) -> None:
+        config = RunConfig(
+            docker_bin="docker",
+            image="yolo-agent:latest",
+            workspace="/workspace",
+            host_cwd=Path("C:/project").resolve(),
+            docker_mode="none",
+            config_mounts=False,
+            env=[f"{GIT_SAFE_DIRECTORIES_ENV}=/custom"],
+            workspace_link_mounts=((Path("D:/shared/vendor").resolve(), "/workspace/vendor"),),
+        )
+
+        command = make_run_command(config)
+
+        self.assertIn(f"{GIT_SAFE_DIRECTORIES_ENV}=/custom", command)
+        self.assertNotIn(f"{GIT_SAFE_DIRECTORIES_ENV}=/workspace/vendor", command)
 
     def test_sidecar_dind_command_starts_privileged_daemon(self) -> None:
         config = RunConfig(
@@ -814,6 +833,15 @@ class CliCommandTests(unittest.TestCase):
         self.assertIn(HOST_GIT_USER_EMAIL_ENV, script)
         self.assertIn("set_git_identity_if_missing user.name", script)
         self.assertIn("set_git_identity_if_missing user.email", script)
+
+    def test_runtime_entrypoint_configures_extra_git_safe_directories(self) -> None:
+        entrypoint = default_runtime_build_paths().context / "agent-entrypoint.sh"
+        script = entrypoint.read_text(encoding="utf-8")
+
+        self.assertIn("configure_git_safe_directories", script)
+        self.assertIn("AGENT_GIT_SAFE_DIRECTORIES", script)
+        self.assertIn("add_git_safe_directory", script)
+        self.assertIn("safe.directory", script)
 
     def test_daily_cache_bust_uses_yyyymmdd(self) -> None:
         self.assertEqual(daily_cache_bust_value(date(2026, 4, 28)), "20260428")

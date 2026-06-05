@@ -8,6 +8,14 @@ if [[ $# -eq 0 ]]; then
   set -- /bin/bash
 fi
 
+run_as_agent() {
+  if [[ "$(id -u)" == "0" ]]; then
+    gosu "${AGENT_USER}" "$@"
+  else
+    "$@"
+  fi
+}
+
 prepare_writable_dir() {
   local path="$1"
   if [[ -n "${path}" ]]; then
@@ -16,23 +24,29 @@ prepare_writable_dir() {
   fi
 }
 
-configure_git_safe_directory() {
-  local workspace="${AGENT_WORKSPACE:-}"
-  if [[ -z "${workspace}" ]]; then
+add_git_safe_directory() {
+  local directory="$1"
+  if [[ -z "${directory}" ]]; then
     return
   fi
 
-  if ! gosu "${AGENT_USER}" git config --global --get-all safe.directory 2>/dev/null | grep -Fx -- "${workspace}" >/dev/null; then
-    gosu "${AGENT_USER}" git config --global --add safe.directory "${workspace}" >/dev/null 2>&1 || true
+  if ! run_as_agent git config --global --get-all safe.directory 2>/dev/null | grep -Fx -- "${directory}" >/dev/null; then
+    run_as_agent git config --global --add safe.directory "${directory}" >/dev/null 2>&1 || true
   fi
 }
 
-run_as_agent() {
-  if [[ "$(id -u)" == "0" ]]; then
-    gosu "${AGENT_USER}" "$@"
-  else
-    "$@"
+configure_git_safe_directories() {
+  add_git_safe_directory "${AGENT_WORKSPACE:-}"
+
+  local extra_directories="${AGENT_GIT_SAFE_DIRECTORIES:-}"
+  if [[ -z "${extra_directories}" ]]; then
+    return
   fi
+
+  local directory=""
+  while IFS= read -r directory; do
+    add_git_safe_directory "${directory}"
+  done <<< "${extra_directories}"
 }
 
 set_git_identity_if_missing() {
@@ -78,7 +92,7 @@ if [[ "$(id -u)" == "0" ]]; then
   mkdir -p "${AGENT_HOME}"
   chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}" >/dev/null 2>&1 || true
   prepare_writable_dir "${AGENT_UV_DATA_ROOT:-}"
-  configure_git_safe_directory
+  configure_git_safe_directories
   configure_host_git_identity
   configure_github_cli_git
 
@@ -96,6 +110,7 @@ if [[ "$(id -u)" == "0" ]]; then
   exec gosu "${AGENT_USER}" "$@"
 fi
 
+configure_git_safe_directories
 configure_host_git_identity
 configure_github_cli_git
 

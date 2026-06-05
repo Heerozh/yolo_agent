@@ -38,6 +38,7 @@ DEFAULT_UV_CACHE_DIR = f"{DEFAULT_UV_DATA_ROOT}/cache"
 GITHUB_CLI_TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
 HOST_GIT_USER_NAME_ENV = "AGENT_HOST_GIT_USER_NAME"
 HOST_GIT_USER_EMAIL_ENV = "AGENT_HOST_GIT_USER_EMAIL"
+GIT_SAFE_DIRECTORIES_ENV = "AGENT_GIT_SAFE_DIRECTORIES"
 TIMEZONE_ENV = "TZ"
 TOOL_SHORTCUT_COMMANDS = {
     "claude": ("claude", "--dangerously-skip-permissions"),
@@ -790,6 +791,7 @@ def make_run_command(config: RunConfig) -> list[str]:
     cmd.extend(["--workdir", config.workspace])
     cmd.extend(["--env", f"AGENT_HOST_CWD={config.host_cwd}"])
     cmd.extend(["--env", f"AGENT_WORKSPACE={config.workspace}"])
+    add_git_safe_directories_env(cmd, config)
 
     apply_docker_mode(cmd, config)
     if config.docker_mode == "dind" and config.dind_name:
@@ -841,6 +843,25 @@ def add_workspace_link_mounts(
 ) -> None:
     for source, target in mounts:
         cmd.extend(["--mount", f"type=bind,source={source},target={target}"])
+
+
+def add_git_safe_directories_env(cmd: list[str], config: RunConfig) -> None:
+    if GIT_SAFE_DIRECTORIES_ENV in env_names(config.env):
+        return
+
+    safe_directories = git_safe_directories_for_run(config)
+    if safe_directories:
+        cmd.extend(["--env", f"{GIT_SAFE_DIRECTORIES_ENV}={chr(10).join(safe_directories)}"])
+
+
+def git_safe_directories_for_run(config: RunConfig) -> tuple[str, ...]:
+    safe_directories: list[str] = []
+    seen = {config.workspace}
+    for _source, target in config.workspace_link_mounts:
+        if target and target not in seen:
+            safe_directories.append(target)
+            seen.add(target)
+    return tuple(safe_directories)
 
 
 def add_config_mounts(cmd: list[str], config: RunConfig) -> None:
