@@ -123,7 +123,10 @@ The launcher also adds these extra container paths to the non-root user's Git
 `safe.directory` list, which avoids dubious-ownership failures when Git sees
 the linked bind mount as owned by a different UID. The entrypoint also adds the
 resolved path for each linked directory, so a workspace link that resolves to a
-root-level path such as `/HeTu` is covered too.
+root-level path such as `/HeTu` is covered too. Each safe directory is also
+added with a `/*` suffix, so independent Git repositories directly under the
+workspace or linked directories are covered without using the global
+`safe.directory=*` escape hatch.
 
 The agent container runs commands as the non-root `agent` user. A root
 entrypoint performs startup setup, fixes Docker socket group access, then drops

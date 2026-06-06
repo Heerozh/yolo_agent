@@ -848,6 +848,7 @@ class CliCommandTests(unittest.TestCase):
         self.assertIn("configure_git_safe_directories", script)
         self.assertIn("AGENT_GIT_SAFE_DIRECTORIES", script)
         self.assertIn("add_git_safe_directory", script)
+        self.assertIn('add_git_safe_directory_value "${directory%/}/*"', script)
         self.assertIn("readlink -f", script)
         self.assertIn("safe.directory", script)
 

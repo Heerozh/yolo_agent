@@ -35,18 +35,28 @@ add_git_safe_directory_value() {
   fi
 }
 
-add_git_safe_directory() {
+add_git_safe_directory_tree() {
   local directory="$1"
   if [[ -z "${directory}" ]]; then
     return
   fi
 
   add_git_safe_directory_value "${directory}"
+  add_git_safe_directory_value "${directory%/}/*"
+}
+
+add_git_safe_directory() {
+  local directory="$1"
+  if [[ -z "${directory}" ]]; then
+    return
+  fi
+
+  add_git_safe_directory_tree "${directory}"
 
   local resolved_directory=""
   resolved_directory="$(readlink -f -- "${directory}" 2>/dev/null || true)"
   if [[ -n "${resolved_directory}" && "${resolved_directory}" != "${directory}" ]]; then
-    add_git_safe_directory_value "${resolved_directory}"
+    add_git_safe_directory_tree "${resolved_directory}"
   fi
 }
 
