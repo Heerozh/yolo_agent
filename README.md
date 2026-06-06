@@ -121,7 +121,9 @@ directories inside the container. These extra mounts are added only to the
 agent container; the DinD sidecar keeps just the top-level workspace mount.
 The launcher also adds these extra container paths to the non-root user's Git
 `safe.directory` list, which avoids dubious-ownership failures when Git sees
-the linked bind mount as owned by a different UID.
+the linked bind mount as owned by a different UID. The entrypoint also adds the
+resolved path for each linked directory, so a workspace link that resolves to a
+root-level path such as `/HeTu` is covered too.
 
 The agent container runs commands as the non-root `agent` user. A root
 entrypoint performs startup setup, fixes Docker socket group access, then drops

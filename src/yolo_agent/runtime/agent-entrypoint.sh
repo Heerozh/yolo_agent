@@ -24,7 +24,7 @@ prepare_writable_dir() {
   fi
 }
 
-add_git_safe_directory() {
+add_git_safe_directory_value() {
   local directory="$1"
   if [[ -z "${directory}" ]]; then
     return
@@ -32,6 +32,21 @@ add_git_safe_directory() {
 
   if ! run_as_agent git config --global --get-all safe.directory 2>/dev/null | grep -Fx -- "${directory}" >/dev/null; then
     run_as_agent git config --global --add safe.directory "${directory}" >/dev/null 2>&1 || true
+  fi
+}
+
+add_git_safe_directory() {
+  local directory="$1"
+  if [[ -z "${directory}" ]]; then
+    return
+  fi
+
+  add_git_safe_directory_value "${directory}"
+
+  local resolved_directory=""
+  resolved_directory="$(readlink -f -- "${directory}" 2>/dev/null || true)"
+  if [[ -n "${resolved_directory}" && "${resolved_directory}" != "${directory}" ]]; then
+    add_git_safe_directory_value "${resolved_directory}"
   fi
 }
 
